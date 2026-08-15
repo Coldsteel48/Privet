@@ -1,0 +1,23 @@
+/build/
+/build-*/
+compile_commands.json
+.cache/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Downloaded ONNX models — see models/README.md for how to fetch them
+/models/*.onnx
+
+*.o
+*.obj
+*.so
+*.a
+*.out
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*~

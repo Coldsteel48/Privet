@@ -1,0 +1,19 @@
+# Example /etc/pam.d snippet for pam_facial.
+#
+# Insert as the FIRST auth line, BEFORE the existing password check.
+# ALWAYS use "sufficient" — NEVER "requisite" or "required". With
+# "sufficient", any non-success result from pam_facial.so (including the
+# safe-fallback PAM_AUTHINFO_UNAVAIL it returns whenever the camera, the
+# model, or enrollment data isn't available) simply falls through to the
+# next line instead of aborting the whole stack. Do not remove or comment
+# out the existing password auth line below it — that is the fallback
+# this module depends on to never lock you out.
+#
+# Read docs/testing-safely.md BEFORE adding this to any real service
+# (sudo, login, a display manager's greeter, etc). Validate first with
+# pam_test_harness against the throwaway facial-auth-test service. Never
+# add this to sshd first — a mistake there is much harder to recover from
+# than a local mistake with a spare root shell open.
+
+auth    sufficient   pam_facial.so
+auth    include      system-auth

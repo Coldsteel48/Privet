@@ -1,0 +1,10 @@
+# Throwaway PAM service used ONLY by pam_test_harness / scripts/test-harness.sh.
+# NOT for login/sudo/sshd/lightdm — never reference this service name from
+# any real PAM stack. See docs/testing-safely.md.
+#
+# scripts/test-harness.sh generates the actual file installed to
+# /etc/pam.d/facial-auth-test from this template, substituting
+# @PAM_MODULE_PATH@ with the absolute build-tree path of whichever module
+# is under test (pam_facial.so or the test-only pam_facial_test.so).
+
+auth    required    @PAM_MODULE_PATH@

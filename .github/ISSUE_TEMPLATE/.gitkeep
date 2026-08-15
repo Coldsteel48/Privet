@@ -1,0 +1,3 @@
+# Placeholder — the real hardware-compatibility issue template (collecting
+# `v4l2-ctl --list-devices` / `--list-formats-ext` output from community
+# hardware) is Phase 2 scope, not built yet. See the project plan.

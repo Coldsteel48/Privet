@@ -1,0 +1,33 @@
+# facial-auth configuration — copy to /etc/facial-auth/config.conf
+#
+# device_path / pixel_format are left commented out below: confirm the
+# real values first via `v4l2-ctl --list-devices` and
+# `v4l2-ctl --list-formats-ext -d /dev/videoN` against your IR device
+# node(s). Until these are set, facial-auth-verify/-enroll will fail to
+# open the camera and cleanly report "unavailable" — safe by default, not
+# a silent misconfiguration.
+
+# device_path = /dev/videoN   # TODO: confirm via v4l2-ctl --list-devices
+# pixel_format = grey         # TODO: confirm via v4l2-ctl --list-formats-ext (grey | y16 | yuyv)
+
+# IR is strongly recommended (real depth/liveness signal, like Windows
+# Hello). Setting camera_mode = rgb opts into a plain webcam, which is far
+# more spoofable (no depth channel, vulnerable to a printed photo or a
+# video replay) — facial-auth-enroll requires an explicit interactive
+# confirmation or --i-understand-the-risk before it will accept this.
+camera_mode = ir
+require_ir = true
+
+frame_width = 640
+frame_height = 480
+capture_timeout_ms = 2000
+max_capture_attempts = 3
+
+detector_model_path = /etc/facial-auth/models/face_detection_yunet.onnx
+embedder_model_path = /etc/facial-auth/models/face_recognition_sface.onnx
+
+# cosine | euclidean
+distance_metric = cosine
+# Starting point only — tune against your own hardware/lighting once IR
+# capture is working; see docs/testing-safely.md.
+match_threshold = 0.36

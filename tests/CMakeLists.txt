@@ -1,0 +1,9 @@
+function(facial_add_test name)
+    add_executable(${name} ${name}.cpp)
+    target_link_libraries(${name} PRIVATE facial_core)
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+facial_add_test(test_pixelformat)
+facial_add_test(test_embedding_matcher)
+facial_add_test(test_embedding_format)
