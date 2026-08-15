@@ -142,13 +142,28 @@ std::optional<cv::Mat> V4L2Camera::captureFrame() {
             frame = frame.clone();  // must copy out before the buffer is requeued below
             break;
         }
-        case PixelFormat::GREY:
+        case PixelFormat::GREY: {
+            // 8-bit single-plane greyscale (confirmed via v4l2-ctl against a
+            // Logi 4K Stream Edition IR node: GREY, fixed 340x340 @30fps).
+            // Converted to BGR here — same contract as the YUYV branch above
+            // — since FaceEmbedder::alignAndCrop()/SFace::feature() expect a
+            // 3-channel image; FaceDetector::detect() would also accept a
+            // single-channel Mat internally, but capture stays the one place
+            // that normalizes pixel format so every downstream stage sees
+            // the same shape regardless of camera mode.
+            cv::Mat grey(config_.height, config_.width, CV_8UC1, buffers_[buf.index].start);
+            cv::cvtColor(grey, frame, cv::COLOR_GRAY2BGR);
+            frame = frame.clone();  // must copy out before the buffer is requeued below
+            break;
+        }
         case PixelFormat::Y16:
             xioctl(fd_, VIDIOC_QBUF, &buf);  // hand the buffer back before throwing
             throw std::runtime_error(
                 "V4L2Camera: PixelFormat::" + toString(config_.pixelFormat) +
-                " capture is not implemented yet — confirm the real format via "
-                "`v4l2-ctl --list-formats-ext` first (see project plan / docs)");
+                " capture is not implemented yet — not present on the confirmed "
+                "hardware (Logi 4K Stream Edition exposes GREY, not Y16); "
+                "confirm via `v4l2-ctl --list-formats-ext` before enabling for "
+                "other devices");
         case PixelFormat::MJPEG:
         case PixelFormat::Unknown:
         default:

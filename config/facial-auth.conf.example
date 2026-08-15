@@ -6,9 +6,23 @@
 # node(s). Until these are set, facial-auth-verify/-enroll will fail to
 # open the camera and cleanly report "unavailable" — safe by default, not
 # a silent misconfiguration.
-
-# device_path = /dev/videoN   # TODO: confirm via v4l2-ctl --list-devices
-# pixel_format = grey         # TODO: confirm via v4l2-ctl --list-formats-ext (grey | y16 | yuyv)
+#
+# Prefer a /dev/v4l/by-id/... path over a raw /dev/videoN: the plain
+# device numbers are assigned in enumeration order and are not guaranteed
+# stable across reboots/replugs on cameras that expose multiple video
+# nodes (metadata nodes, IR+RGB pairs, etc). List yours with
+# `ls -la /dev/v4l/by-id/`.
+#
+# Example confirmed against a Logitech "Logi 4K Stream Edition" webcam:
+# its IR node only ever exposes GREY at a fixed 340x340 @30fps (no other
+# resolution/framerate is offered — frame_width/frame_height below MUST
+# match exactly, V4L2_S_FMT will just clamp to the nearest supported mode
+# otherwise). No separate IR-illuminator control was found in
+# `v4l2-ctl --all -d /dev/videoN`; the IR LEDs appear to activate
+# automatically when this node/format is streamed.
+#
+# device_path = /dev/v4l/by-id/usb-046d_Logi_4K_Stream_Edition_371DE0C2-video-index2
+# pixel_format = grey
 
 # IR is strongly recommended (real depth/liveness signal, like Windows
 # Hello). Setting camera_mode = rgb opts into a plain webcam, which is far
@@ -18,6 +32,8 @@
 camera_mode = ir
 require_ir = true
 
+# Must match your IR node's actual (and often only) supported resolution
+# exactly — see the Logi 4K Stream Edition example above (340x340).
 frame_width = 640
 frame_height = 480
 capture_timeout_ms = 2000
