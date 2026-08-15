@@ -18,8 +18,13 @@
 # resolution/framerate is offered — frame_width/frame_height below MUST
 # match exactly, V4L2_S_FMT will just clamp to the nearest supported mode
 # otherwise). No separate IR-illuminator control was found in
-# `v4l2-ctl --all -d /dev/videoN`; the IR LEDs appear to activate
-# automatically when this node/format is streamed.
+# `v4l2-ctl --all -d /dev/videoN` — instead, the IR LEDs strobe on
+# alternating captured frames (confirmed: consecutive frames alternate
+# between near-black/ambient and a clearly IR-lit face, mean pixel value
+# ~0.65 vs ~50). This is a liveness/anti-spoofing pattern, not a bug —
+# facial-auth-verify's existing per-attempt retry loop already handles it
+# correctly (a dark frame just yields 0 detected faces and the loop moves
+# to the next attempt), see max_capture_attempts below.
 #
 # device_path = /dev/v4l/by-id/usb-046d_Logi_4K_Stream_Edition_371DE0C2-video-index2
 # pixel_format = grey
@@ -37,6 +42,10 @@ require_ir = true
 frame_width = 640
 frame_height = 480
 capture_timeout_ms = 2000
+# On a strobing IR camera (see the note above), attempts must be >= 2 so
+# a dark/ambient frame can't dominate the whole budget — with strict
+# alternation, 3 guarantees at least one illuminated frame regardless of
+# which phase capture happens to start on.
 max_capture_attempts = 3
 
 detector_model_path = /etc/facial-auth/models/face_detection_yunet.onnx
