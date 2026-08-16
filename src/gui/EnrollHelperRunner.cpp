@@ -35,8 +35,9 @@ void EnrollHelperRunner::run(const QStringList& enrollArgs) {
 }
 
 void EnrollHelperRunner::enroll(const QString& username, bool reEnroll, const QString& cameraMode,
-                                 bool iUnderstandTheRisk) {
-    QStringList args{"--user", username, "--camera-mode", cameraMode};
+                                 bool iUnderstandTheRisk, double illuminationGain) {
+    QStringList args{"--user", username, "--camera-mode", cameraMode, "--illumination-gain",
+                      QString::number(illuminationGain, 'f', 2)};
     if (reEnroll) args << "--re-enroll";
     if (iUnderstandTheRisk) args << "--i-understand-the-risk";
     run(args);
@@ -50,6 +51,10 @@ void EnrollHelperRunner::queryStatus(const QString& username) {
     run({"--status", "--user", username});
 }
 
+void EnrollHelperRunner::test(const QString& username) {
+    run({"--test", "--user", username});
+}
+
 void EnrollHelperRunner::writeConfig(const QStringList& setKeyValuePairs) {
     QStringList args{"--write-config"};
     for (const auto& kv : setKeyValuePairs) {
@@ -58,11 +63,20 @@ void EnrollHelperRunner::writeConfig(const QStringList& setKeyValuePairs) {
     run(args);
 }
 
+void EnrollHelperRunner::enablePam(const QString& service, const QString& username) {
+    run({"--pam-enable", "--service", service, "--user", username});
+}
+
+void EnrollHelperRunner::disablePam(const QString& service) {
+    run({"--pam-disable", "--service", service});
+}
+
 EnrollHelperRunner::Result EnrollHelperRunner::parseOutput(const QString& stdoutText,
                                                             int exitCode) const {
     // facial-auth-enroll prints exactly one machine-parseable line, e.g.:
-    //   STATUS=ok SAMPLES=8 CAMERA_MODE=ir
-    //   STATUS=ok ENROLLED=true CAMERA_MODE=ir SAMPLES=8 ENROLLED_AT="2026-08-16T12:00:00Z"
+    //   STATUS=ok ENROLLED=true SAMPLES=8 CAMERA_MODE=ir ENROLLED_AT="2026-08-16T12:00:00Z"
+    //   STATUS=ok ENROLLED=false
+    //   STATUS=ok MATCH=true   (--test; MATCH is "true" | "false" | "unavailable")
     //   STATUS=error MESSAGE="camera busy"
     const QString line = stdoutText.trimmed();
 
@@ -85,8 +99,11 @@ EnrollHelperRunner::Result EnrollHelperRunner::parseOutput(const QString& stdout
     result.cameraMode = extract("CAMERA_MODE");
     result.enrolledAt = extract("ENROLLED_AT");
     result.enrolled = extract("ENROLLED") == QLatin1String("true");
+    result.matchOutcome = extract("MATCH");
     const QString samples = extract("SAMPLES");
     if (!samples.isEmpty()) result.samples = samples.toInt();
+    const QString testPasses = extract("TEST_PASSES");
+    if (!testPasses.isEmpty()) result.testPasses = testPasses.toInt();
 
     if (!result.ok && result.message.isEmpty()) {
         result.message = exitCode != 0 ? QString("helper exited with code %1").arg(exitCode)

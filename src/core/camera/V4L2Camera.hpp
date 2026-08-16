@@ -22,6 +22,13 @@ struct CameraConfig {
     // outer timeout around the whole helper process — see the plan's
     // "never lock out" design for why there are three independent layers.
     int timeoutMs = 2000;
+    // Software brightness multiplier applied to every captured frame right
+    // before it's returned (cv::convertScaleAbs, alpha=illuminationGain,
+    // beta=0), uniformly regardless of pixel format. 1.0 = no change. This
+    // is a display/detection aid, not real IR-illuminator control — see
+    // Config::illuminationGain, which is where this value actually comes
+    // from in facial-auth-verify/-enroll/-control.
+    double illuminationGain = 1.0;
 };
 
 // Thin V4L2 mmap-streaming capture wrapper. The generic buffer-management

@@ -175,6 +175,10 @@ std::optional<cv::Mat> V4L2Camera::captureFrame() {
         return std::nullopt;
     }
 
+    if (config_.illuminationGain != 1.0) {
+        cv::convertScaleAbs(frame, frame, config_.illuminationGain, 0);
+    }
+
     return frame;
 }
 

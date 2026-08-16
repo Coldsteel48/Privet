@@ -3,6 +3,7 @@
 #include <QTabWidget>
 
 #include "EnrollmentPage.hpp"
+#include "PamIntegrationPage.hpp"
 #include "SettingsPage.hpp"
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -12,5 +13,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* tabs = new QTabWidget(this);
     tabs->addTab(new EnrollmentPage(tabs), tr("Enrollment"));
     tabs->addTab(new SettingsPage(tabs), tr("Settings"));
+    tabs->addTab(new PamIntegrationPage(tabs), tr("System Login"));
     setCentralWidget(tabs);
 }

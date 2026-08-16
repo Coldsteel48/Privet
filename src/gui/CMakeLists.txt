@@ -7,6 +7,8 @@ add_executable(facial-auth-control
     SettingsPage.cpp
     RiskDisclaimerDialog.cpp
     EnrollHelperRunner.cpp
+    PamIntegrationPage.cpp
+    PamEnableConfirmDialog.cpp
 )
 
 target_include_directories(facial-auth-control PRIVATE "${CMAKE_BINARY_DIR}")

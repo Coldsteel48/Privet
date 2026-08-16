@@ -14,6 +14,13 @@
 # pam_test_harness against the throwaway facial-auth-test service. Never
 # add this to sshd first — a mistake there is much harder to recover from
 # than a local mistake with a spare root shell open.
+#
+# facial-auth-control's "System Login" tab can also insert this line for
+# you (sudo/gdm-password/sddm/lightdm only, never sshd), gated behind a
+# typed confirmation and a 4-of-5 live recognition check performed by the
+# privileged helper before it writes anything — see
+# src/core/pam/PamServiceConfig.hpp. Editing by hand, as below, works
+# identically; use whichever you're more comfortable auditing.
 
 auth    sufficient   pam_facial.so
 auth    include      system-auth

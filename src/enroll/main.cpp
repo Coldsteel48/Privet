@@ -10,10 +10,13 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <opencv2/core.hpp>
@@ -22,7 +25,9 @@
 #include "core/config/Config.hpp"
 #include "core/face/FaceDetector.hpp"
 #include "core/face/FaceEmbedder.hpp"
+#include "core/pam/PamServiceConfig.hpp"
 #include "core/storage/EmbeddingStore.hpp"
+#include "core/verify/VerifyRunner.hpp"
 
 namespace {
 
@@ -31,15 +36,28 @@ using namespace facial_auth;
 constexpr int kSampleFramesToCapture = 8;
 constexpr float kMinDetectionScore = 0.85f;
 
+// Before ever touching a live PAM config, require most of several fresh
+// recognition attempts to actually match — not just one. Guards against
+// enabling on a single lucky frame when lighting/positioning is marginal;
+// see runPamEnable(). Threshold, not "all 5", so one dropped/blinked
+// frame doesn't block an otherwise-working setup.
+constexpr int kPamPreEnableAttempts = 5;
+constexpr int kPamPreEnableMinPasses = 4;
+
 struct Args {
     std::optional<std::string> user;
     bool reEnroll = false;
     bool remove = false;
     CameraMode cameraMode = CameraMode::IR;
     bool iUnderstandTheRisk = false;
+    std::optional<double> illuminationGain;  // --illumination-gain: applied AND persisted, see runEnroll
     bool writeConfig = false;
     std::vector<std::pair<std::string, std::string>> configOverrides;  // --set key=value
     bool status = false;
+    bool test = false;
+    bool pamEnable = false;
+    bool pamDisable = false;
+    std::optional<std::string> service;  // --service, for --pam-enable/--pam-disable
     bool showHelp = false;
 };
 
@@ -47,14 +65,30 @@ void printUsage() {
     std::cout <<
         "Usage: facial-auth-enroll [--user NAME] [--re-enroll] [--delete]\n"
         "                           [--camera-mode ir|rgb] [--i-understand-the-risk]\n"
+        "                           [--illumination-gain VALUE]\n"
         "       facial-auth-enroll --status [--user NAME]\n"
+        "       facial-auth-enroll --test [--user NAME]\n"
         "       facial-auth-enroll --write-config --set key=value [--set key=value ...]\n"
+        "       facial-auth-enroll --pam-enable --service NAME [--user NAME]\n"
+        "       facial-auth-enroll --pam-disable --service NAME\n"
         "\n"
         "Must be run as root (directly, or via pkexec from facial-auth-control) — even\n"
-        "--status, since /var/lib/facial-auth/ is root-only and this is the only\n"
-        "sanctioned way for the unprivileged GUI to learn a user's enrollment state.\n"
+        "--status/--test, since /var/lib/facial-auth/ is root-only and this is the only\n"
+        "sanctioned way for the unprivileged GUI to learn a user's enrollment state or\n"
+        "exercise a real recognition attempt without going through PAM. --test runs the\n"
+        "exact same capture/detect/match logic as facial-auth-verify (via facial_core's\n"
+        "VerifyRunner) so a passing test means login will actually work.\n"
         "RGB camera mode is an explicit, at-your-own-risk opt-in: a plain webcam has\n"
-        "no depth channel and is far more spoofable (photo/video replay) than IR.\n";
+        "no depth channel and is far more spoofable (photo/video replay) than IR.\n"
+        "\n"
+        "--pam-enable/--pam-disable wire pam_facial.so into (or out of) a real\n"
+        "/etc/pam.d/NAME, always as \"sufficient\" and never removing the existing\n"
+        "password auth line. NAME must be on the fixed allow-list in\n"
+        "core/pam/PamServiceConfig.hpp (sudo/gdm-password/sddm/lightdm) — sshd and\n"
+        "anything else are always rejected. --pam-enable additionally requires " +
+            std::to_string(kPamPreEnableMinPasses) + "/" + std::to_string(kPamPreEnableAttempts) +
+            " fresh\n"
+            "recognition attempts to actually match first; it never writes to disk otherwise.\n";
 }
 
 std::optional<Args> parseArgs(int argc, char** argv) {
@@ -73,10 +107,20 @@ std::optional<Args> parseArgs(int argc, char** argv) {
             args.cameraMode = cameraModeFromString(argv[++i]);
         } else if (arg == "--i-understand-the-risk") {
             args.iUnderstandTheRisk = true;
+        } else if (arg == "--illumination-gain" && i + 1 < argc) {
+            args.illuminationGain = std::atof(argv[++i]);
         } else if (arg == "--write-config") {
             args.writeConfig = true;
         } else if (arg == "--status") {
             args.status = true;
+        } else if (arg == "--test") {
+            args.test = true;
+        } else if (arg == "--pam-enable") {
+            args.pamEnable = true;
+        } else if (arg == "--pam-disable") {
+            args.pamDisable = true;
+        } else if (arg == "--service" && i + 1 < argc) {
+            args.service = argv[++i];
         } else if (arg == "--set" && i + 1 < argc) {
             const std::string kv = argv[++i];
             const auto eq = kv.find('=');
@@ -127,6 +171,162 @@ bool confirmRgbRisk(bool alreadyAcknowledged) {
     return response == "yes";
 }
 
+std::optional<std::string> readWholeFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) return std::nullopt;
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    return buf.str();
+}
+
+// Writes atomically (write-to-temp + fsync + rename, so a crash or power
+// loss mid-write can never leave /etc/pam.d/NAME half-written) and
+// preserves the original file's mode rather than assuming one, since
+// this is the one write path in this codebase that touches a file other
+// than this project's own — see runPamEnable/runPamDisable.
+bool writeFileAtomic(const std::string& path, const std::string& content) {
+    mode_t mode = 0644;
+    struct stat st{};
+    if (::stat(path.c_str(), &st) == 0) {
+        mode = st.st_mode & 07777;
+    }
+
+    const std::string tmpPath = path + ".pam_facial.tmp";
+    const int fd = ::open(tmpPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, mode);
+    if (fd < 0) return false;
+
+    const char* data = content.data();
+    std::size_t remaining = content.size();
+    while (remaining > 0) {
+        const ssize_t written = ::write(fd, data, remaining);
+        if (written < 0) {
+            ::close(fd);
+            ::unlink(tmpPath.c_str());
+            return false;
+        }
+        data += written;
+        remaining -= static_cast<std::size_t>(written);
+    }
+    if (::fsync(fd) != 0) {
+        ::close(fd);
+        ::unlink(tmpPath.c_str());
+        return false;
+    }
+    ::close(fd);
+
+    if (::rename(tmpPath.c_str(), path.c_str()) != 0) {
+        ::unlink(tmpPath.c_str());
+        return false;
+    }
+    return true;
+}
+
+// Wires pam_facial.so into (or out of) a real /etc/pam.d/NAME. This is
+// the one privileged action in this whole codebase that touches
+// something outside facial-auth's own files — see README's "never lock
+// out" section and docs/testing-safely.md for why every safeguard here
+// (fixed allow-list, "sufficient" only, never auto-touching a hand-edited
+// line, a pre-enable recognition threshold, a one-time backup) exists.
+//
+// The pre-enable recognition check lives HERE rather than in
+// facial-auth-control, deliberately: this binary is the actual privilege
+// boundary (invoked via pkexec), so the one thing that must never happen
+// — writing to a live PAM config on the strength of a single lucky match,
+// or because a compromised/buggy GUI skipped its own check — has to be
+// enforced on this side of that boundary, not trusted from the caller.
+int runPamEnable(const std::string& service, const std::string& username) {
+    if (!isAllowedPamService(service)) {
+        std::cout << "STATUS=error MESSAGE=\"service '" << service << "' is not on the allow-list\"\n";
+        return 1;
+    }
+
+    const std::string path = "/etc/pam.d/" + service;
+    const auto contentOpt = readWholeFile(path);
+    if (!contentOpt) {
+        std::cout << "STATUS=error MESSAGE=\"" << path << " does not exist\"\n";
+        return 1;
+    }
+
+    int passes = 0;
+    for (int attempt = 0; attempt < kPamPreEnableAttempts; ++attempt) {
+        const auto outcome = runVerification(username);
+        std::cerr << "facial-auth-enroll: pre-enable check " << (attempt + 1) << "/"
+                  << kPamPreEnableAttempts << ": "
+                  << (outcome == VerifyOutcome::Match ? "match" : "no match") << "\n";
+        if (outcome == VerifyOutcome::Match) ++passes;
+    }
+    if (passes < kPamPreEnableMinPasses) {
+        std::cout << "STATUS=error MESSAGE=\"pre-enable recognition check only passed " << passes
+                   << "/" << kPamPreEnableAttempts << " attempts (need at least "
+                   << kPamPreEnableMinPasses << "/" << kPamPreEnableAttempts
+                   << "); not touching " << path << "\" TEST_PASSES=" << passes << "\n";
+        return 1;
+    }
+
+    std::string newContent;
+    try {
+        newContent = enableInContent(*contentOpt);
+    } catch (const std::exception& e) {
+        std::cout << "STATUS=error MESSAGE=\"" << e.what() << "\"\n";
+        return 1;
+    }
+
+    if (newContent == *contentOpt) {
+        std::cout << "STATUS=ok MESSAGE=\"already enabled\" TEST_PASSES=" << passes << "\n";
+        return 0;
+    }
+
+    // One-time backup of the pristine pre-facial-auth file. Never
+    // overwritten on subsequent runs, so it always reflects the state
+    // before this tool ever touched the file, regardless of how many
+    // times enable/disable gets toggled afterward.
+    const std::string backupPath = path + ".pam_facial.orig";
+    if (!readWholeFile(backupPath) && !writeFileAtomic(backupPath, *contentOpt)) {
+        std::cout << "STATUS=error MESSAGE=\"failed to write backup " << backupPath << "\"\n";
+        return 1;
+    }
+
+    if (!writeFileAtomic(path, newContent)) {
+        std::cout << "STATUS=error MESSAGE=\"failed to write " << path << "\"\n";
+        return 1;
+    }
+
+    std::cout << "STATUS=ok TEST_PASSES=" << passes << "\n";
+    return 0;
+}
+
+// Unconditionally safe (see PamServiceConfig.hpp's disableInContent):
+// strips any pam_facial.so line regardless of control flag, so this also
+// doubles as the recovery path out of a hand-edited EnabledUnsafe state.
+// No pre-check needed — this only ever narrows what a login accepts.
+int runPamDisable(const std::string& service) {
+    if (!isAllowedPamService(service)) {
+        std::cout << "STATUS=error MESSAGE=\"service '" << service << "' is not on the allow-list\"\n";
+        return 1;
+    }
+
+    const std::string path = "/etc/pam.d/" + service;
+    const auto contentOpt = readWholeFile(path);
+    if (!contentOpt) {
+        std::cout << "STATUS=error MESSAGE=\"" << path << " does not exist\"\n";
+        return 1;
+    }
+
+    const std::string newContent = disableInContent(*contentOpt);
+    if (newContent == *contentOpt) {
+        std::cout << "STATUS=ok MESSAGE=\"already disabled\"\n";
+        return 0;
+    }
+
+    if (!writeFileAtomic(path, newContent)) {
+        std::cout << "STATUS=error MESSAGE=\"failed to write " << path << "\"\n";
+        return 1;
+    }
+
+    std::cout << "STATUS=ok\n";
+    return 0;
+}
+
 int runWriteConfig(const Args& args) {
     const std::string path = "/etc/facial-auth/config.conf";
     Config config = Config::load(path).value_or(Config::defaults());
@@ -167,6 +367,28 @@ int runStatus(const std::string& username) {
     return 0;
 }
 
+// Drives facial-auth-control's "Test Recognition" button: runs the exact
+// same VerifyRunner logic facial-auth-verify uses at real login time, so a
+// user can confirm recognition actually works (and tune illumination_gain
+// against it) without needing to trigger a real PAM authentication. Always
+// exits 0/STATUS=ok — MATCH conveys the actual outcome, since "the test
+// ran" and "you matched" are different questions and only the former
+// should ever produce STATUS=error.
+int runTest(const std::string& username) {
+    switch (runVerification(username)) {
+        case VerifyOutcome::Match:
+            std::cout << "STATUS=ok MATCH=true\n";
+            return 0;
+        case VerifyOutcome::NoMatch:
+            std::cout << "STATUS=ok MATCH=false\n";
+            return 0;
+        case VerifyOutcome::Unavailable:
+        default:
+            std::cout << "STATUS=ok MATCH=unavailable\n";
+            return 0;
+    }
+}
+
 int runDelete(const std::string& username) {
     EmbeddingStore store;
     if (!store.remove(username)) {
@@ -201,12 +423,29 @@ int runEnroll(const std::string& username, const Args& args) {
     Config config = *configOpt;
     config.cameraMode = args.cameraMode;
 
+    // Whatever illumination_gain facial-auth-control's slider was set to
+    // when the user pressed Enroll/Re-enroll is what actually worked for
+    // this capture session, so persist it as the new default — the same
+    // config real facial-auth-verify reads at login — rather than making
+    // the user separately press "Save Illumination" first.
+    if (args.illuminationGain) {
+        config.illuminationGain = *args.illuminationGain;
+        std::ofstream out("/etc/facial-auth/config.conf", std::ios::trunc);
+        if (!out.is_open()) {
+            std::cout << "STATUS=error MESSAGE=\"failed to persist illumination_gain to "
+                         "/etc/facial-auth/config.conf\"\n";
+            return 1;
+        }
+        out << serialize(config);
+    }
+
     CameraConfig cameraConfig;
     cameraConfig.devicePath = config.devicePath;
     cameraConfig.pixelFormat = config.pixelFormat;
     cameraConfig.width = config.frameWidth;
     cameraConfig.height = config.frameHeight;
     cameraConfig.timeoutMs = config.captureTimeoutMs;
+    cameraConfig.illuminationGain = config.illuminationGain;
 
     V4L2Camera camera(cameraConfig);
     if (!camera.open()) {
@@ -264,8 +503,9 @@ int runEnroll(const std::string& username, const Args& args) {
         return 1;
     }
 
-    std::cout << "STATUS=ok SAMPLES=" << embeddings.size() << " CAMERA_MODE="
-              << toString(config.cameraMode) << "\n";
+    std::cout << "STATUS=ok ENROLLED=true SAMPLES=" << embeddings.size() << " CAMERA_MODE="
+              << toString(config.cameraMode) << " ENROLLED_AT=\"" << metadata.enrolledAtIso8601
+              << "\"\n";
     return 0;
 }
 
@@ -298,11 +538,27 @@ int main(int argc, char** argv) {
             return 1;
         }
 
+        if (args.pamEnable || args.pamDisable) {
+            if (!args.service) {
+                std::cout << "STATUS=error MESSAGE=\"--service is required\"\n";
+                return 1;
+            }
+            if (args.pamDisable) {
+                return runPamDisable(*args.service);
+            }
+            const std::string username = resolveUsername(args);
+            if (username.empty()) return 1;
+            return runPamEnable(*args.service, username);
+        }
+
         const std::string username = resolveUsername(args);
         if (username.empty()) return 1;
 
         if (args.status) {
             return runStatus(username);
+        }
+        if (args.test) {
+            return runTest(username);
         }
         if (args.remove) {
             return runDelete(username);

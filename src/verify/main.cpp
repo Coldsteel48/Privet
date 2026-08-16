@@ -11,15 +11,8 @@
 #include <exception>
 #include <string>
 
-#include <opencv2/core.hpp>
-
-#include "core/camera/V4L2Camera.hpp"
-#include "core/config/Config.hpp"
-#include "core/face/FaceDetector.hpp"
-#include "core/face/FaceEmbedder.hpp"
 #include "core/log/Logger.hpp"
-#include "core/match/EmbeddingMatcher.hpp"
-#include "core/storage/EmbeddingStore.hpp"
+#include "core/verify/VerifyRunner.hpp"
 
 namespace {
 
@@ -27,68 +20,21 @@ constexpr int kExitMatch = 0;
 constexpr int kExitNoMatch = 1;
 constexpr int kExitUnavailable = 2;
 
+// The actual capture/detect/match logic lives in facial_core's
+// VerifyRunner, shared with facial-auth-enroll's --test mode (the GUI's
+// "Test Recognition" button) — see VerifyRunner.hpp for why that sharing
+// matters. This just maps the outcome to this process's exit-code
+// contract.
 int runVerify(const std::string& username) {
-    using namespace facial_auth;
-
-    const auto configOpt = Config::load("/etc/facial-auth/config.conf");
-    if (!configOpt) {
-        Logger::log(LogLevel::Error,
-                    "facial-auth-verify: failed to load /etc/facial-auth/config.conf");
-        return kExitUnavailable;
-    }
-    const Config& config = *configOpt;
-
-    EmbeddingStore store;
-    const auto enrolledOpt = store.load(username);
-    if (!enrolledOpt) {
-        Logger::log(LogLevel::Warning,
-                     "facial-auth-verify: no enrollment on file for user '" + username + "'");
-        return kExitUnavailable;
-    }
-    const cv::Mat enrolledMat = toMat(*enrolledOpt);
-
-    CameraConfig cameraConfig;
-    cameraConfig.devicePath = config.devicePath;
-    cameraConfig.pixelFormat = config.pixelFormat;
-    cameraConfig.width = config.frameWidth;
-    cameraConfig.height = config.frameHeight;
-    cameraConfig.timeoutMs = config.captureTimeoutMs;
-
-    V4L2Camera camera(cameraConfig);
-    if (!camera.open()) {
-        Logger::log(LogLevel::Error,
-                    "facial-auth-verify: failed to open camera '" + config.devicePath + "'");
-        return kExitUnavailable;
-    }
-
-    FaceDetector detector(config.detectorModelPath);
-    FaceEmbedder embedder(config.embedderModelPath);
-    EmbeddingMatcher matcher(distanceMetricFromString(config.distanceMetric), config.matchThreshold);
-
-    bool sawARealFace = false;
-    for (int attempt = 0; attempt < config.maxCaptureAttempts; ++attempt) {
-        const auto frameOpt = camera.captureFrame();
-        if (!frameOpt) {
-            continue;  // per-attempt timeout/transient I/O error — retry within budget
-        }
-
-        const auto faces = detector.detect(*frameOpt);
-        if (faces.size() != 1) {
-            // 0 faces: nobody in frame yet, keep trying. >1 faces:
-            // ambiguous — Phase 1 policy is to reject rather than guess.
-            continue;
-        }
-
-        const cv::Mat aligned = embedder.alignAndCrop(*frameOpt, faces.front());
-        const cv::Mat probe = embedder.extractEmbedding(aligned);
-
-        if (matcher.isMatch(probe, enrolledMat)) {
+    switch (facial_auth::runVerification(username)) {
+        case facial_auth::VerifyOutcome::Match:
             return kExitMatch;
-        }
-        sawARealFace = true;  // a face was genuinely seen and compared, just didn't match
+        case facial_auth::VerifyOutcome::NoMatch:
+            return kExitNoMatch;
+        case facial_auth::VerifyOutcome::Unavailable:
+        default:
+            return kExitUnavailable;
     }
-
-    return sawARealFace ? kExitNoMatch : kExitUnavailable;
 }
 
 }  // namespace

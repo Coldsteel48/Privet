@@ -32,6 +32,15 @@ struct Config {
     std::string distanceMetric = "cosine";
     double matchThreshold = 0.36;
 
+    // Software brightness multiplier applied uniformly to every captured
+    // frame in V4L2Camera::captureFrame() (see CameraConfig::illuminationGain)
+    // — not real IR-illuminator control (no such control was found on the
+    // confirmed hardware; the illuminator strobes autonomously). 1.0 = no
+    // change. Tuned live via facial-auth-control's Enrollment tab slider,
+    // which only persists here on an explicit Save so real captures (enroll
+    // and verify alike) see the same boost the user tuned by eye.
+    double illuminationGain = 1.0;
+
     // Parses a `key = value` config file (# or ; starts a comment line,
     // blank lines ignored, unrecognized keys ignored for forward
     // compatibility). Returns std::nullopt only if the file cannot be

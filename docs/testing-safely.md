@@ -66,7 +66,11 @@ sensible result and — critically — never hangs:
 
 ## 5. Only then, add it to a real stack — locally first
 
-Once the above has been validated repeatedly:
+Once the above has been validated repeatedly, either edit `/etc/pam.d`
+by hand or use `facial-auth-control`'s "System Login" tab — both end up
+doing the same thing; pick whichever you're more comfortable auditing.
+
+### 5a. By hand
 
 1. Add the `pam_facial.so` line to a **local, non-remote** service first
    (e.g. `sudo`, or a display manager greeter on the machine you're
@@ -76,3 +80,33 @@ Once the above has been validated repeatedly:
 3. **Never add this to `sshd` first.** A mistake in a local service is
    recoverable from the console; a mistake in `sshd` on a remote/headless
    machine can lock you out of your only way in.
+
+### 5b. Via facial-auth-control's "System Login" tab
+
+This does the same edit, but with the constraints baked into the
+privileged helper (`facial-auth-enroll --pam-enable`, see
+`src/core/pam/PamServiceConfig.hpp` and `runPamEnable` in
+`src/enroll/main.cpp`) rather than left to a careful hand-edit:
+
+- Only a fixed allow-list of services is ever offered — `sudo` and local
+  greeters (`gdm-password`, `sddm`, `lightdm`). `sshd` is not on the list
+  and there is no free-text field, so it is never reachable from the GUI
+  at all.
+- Clicking Enable requires a typed `CONFIRM`, plus an explicit
+  acknowledgement that you have a spare way in.
+- Before writing anything, the helper itself (not the GUI) runs 5 fresh
+  recognition attempts and requires at least 4 to match. If that
+  threshold isn't met, nothing is written — same "never lock out" logic
+  as `pam_facial.so` itself, just applied one step earlier.
+- The line is always inserted as `sufficient`, first in the file, above
+  whatever was already there. A pre-existing `pam_facial.so` line with
+  any other control flag (i.e. someone hand-edited it) is left alone and
+  reported, never auto-corrected.
+- The first time it ever touches a given service's file, it saves a
+  `NAME.pam_facial.orig` backup alongside it and never overwrites that
+  backup again.
+- Disable removes any `pam_facial.so` line regardless of control flag —
+  this is also the recovery path if a hand-edit left the file in a state
+  the tool won't touch automatically.
+
+Keep the spare root shell open regardless of which path you use.

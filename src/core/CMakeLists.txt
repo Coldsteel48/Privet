@@ -9,6 +9,8 @@ add_library(facial_core STATIC
     storage/EmbeddingStore.cpp
     config/Config.cpp
     log/Logger.cpp
+    verify/VerifyRunner.cpp
+    pam/PamServiceConfig.cpp
 )
 
 # Headers are included as "core/camera/Foo.hpp" etc. throughout the tree,

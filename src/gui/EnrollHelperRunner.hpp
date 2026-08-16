@@ -24,8 +24,10 @@ public:
         QString message;       // human-readable error, if !ok
         int samples = 0;       // enroll: number of samples captured
         QString cameraMode;    // enroll/status: "ir" | "rgb"
-        bool enrolled = false; // status: whether the user has an enrollment on file
-        QString enrolledAt;    // status: ISO-8601 timestamp
+        bool enrolled = false; // enroll/status: whether the user has an enrollment on file
+        QString enrolledAt;    // enroll/status: ISO-8601 timestamp
+        QString matchOutcome;  // test: "true" | "false" | "unavailable"
+        int testPasses = -1;   // pam-enable: recognition attempts that matched, out of kPamPreEnableAttempts; -1 if absent
     };
 
     explicit EnrollHelperRunner(QObject* parent = nullptr);
@@ -33,10 +35,21 @@ public:
     bool isBusy() const;
 
     void enroll(const QString& username, bool reEnroll, const QString& cameraMode,
-                bool iUnderstandTheRisk);
+                bool iUnderstandTheRisk, double illuminationGain);
     void remove(const QString& username);
     void queryStatus(const QString& username);
+    void test(const QString& username);
     void writeConfig(const QStringList& setKeyValuePairs);  // each entry "key=value"
+
+    // Wires pam_facial.so into (or out of) a real /etc/pam.d/service.
+    // enablePam runs facial-auth-enroll's own pre-enable recognition
+    // threshold check server-side before it ever writes anything (see
+    // src/enroll/main.cpp's runPamEnable) — this call can take up to
+    // roughly 30 seconds for that reason. Both are always subject to the
+    // fixed allow-list in core/pam/PamServiceConfig.hpp regardless of
+    // what's passed here.
+    void enablePam(const QString& service, const QString& username);
+    void disablePam(const QString& service);
 
 signals:
     void finished(EnrollHelperRunner::Result result);

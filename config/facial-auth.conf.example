@@ -56,3 +56,11 @@ distance_metric = cosine
 # Starting point only — tune against your own hardware/lighting once IR
 # capture is working; see docs/testing-safely.md.
 match_threshold = 0.36
+
+# Software brightness multiplier applied to every captured frame (1.0 =
+# no change) — NOT real IR-illuminator control; no such control was found
+# on the confirmed hardware (see the strobing note above). Tune this live
+# against the preview on facial-auth-control's Enrollment tab, then press
+# "Save Illumination" there — that's the only sanctioned way to set this,
+# so real enroll/verify captures use the same value you tuned by eye.
+illumination_gain = 1.0

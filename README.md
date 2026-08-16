@@ -41,6 +41,16 @@ any real login path.
   `config/pam.d/facial-auth.example`.
 - Read `docs/testing-safely.md` and use `scripts/test-harness.sh` before
   adding this to any real service. Never add it to `sshd` first.
+- `facial-auth-control`'s "System Login" tab can also do this for you,
+  gated: it only ever offers a fixed allow-list of services (`sudo` and
+  local greeters — never `sshd`, never a typed-in name — see
+  `src/core/pam/PamServiceConfig.hpp`), requires a typed confirmation,
+  and — enforced by the privileged helper itself, not the GUI — runs 5
+  fresh recognition attempts and refuses to write anything unless at
+  least 4 match. It never touches a line it didn't write itself (a
+  hand-edited entry is reported, not modified), keeps a one-time backup
+  of the original file, and its Disable button works even to recover from
+  that hand-edited state.
 
 ## Building
 
@@ -55,6 +65,12 @@ cmake -S . -B build
 cmake --build build
 ctest --test-dir build             # pure-math unit tests, no camera/hardware needed
 ```
+
+Or `scripts/install.sh` to do all of the above plus `cmake --install` in one
+step, with distro-appropriate package names/PAM module paths for
+Arch/CachyOS, Debian/Ubuntu, Fedora/RHEL-family, and openSUSE. It never
+touches `/etc/pam.d` — see the script's header and the safety section
+above.
 
 ## Camera setup — you need to do this first
 

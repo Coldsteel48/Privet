@@ -52,6 +52,8 @@ void applyConfigOverride(Config& config, const std::string& key, const std::stri
         config.distanceMetric = value;
     } else if (key == "match_threshold") {
         config.matchThreshold = std::atof(value.c_str());
+    } else if (key == "illumination_gain") {
+        config.illuminationGain = std::atof(value.c_str());
     }
     // Unknown keys are intentionally ignored for forward compatibility.
 }
@@ -99,7 +101,8 @@ std::string serialize(const Config& config) {
         << "detector_model_path = " << config.detectorModelPath << "\n"
         << "embedder_model_path = " << config.embedderModelPath << "\n"
         << "distance_metric = " << config.distanceMetric << "\n"
-        << "match_threshold = " << config.matchThreshold << "\n";
+        << "match_threshold = " << config.matchThreshold << "\n"
+        << "illumination_gain = " << config.illuminationGain << "\n";
     return out.str();
 }
 
