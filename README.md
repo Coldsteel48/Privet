@@ -1,7 +1,7 @@
 # pam_facial
 
 IR-camera facial authentication for Linux — a C++-only, Windows-Hello /
-Howdy-style PAM module. No Python anywhere in the stack.
+Howdy-style PAM module. No Python or RUST anywhere in the stack.
 
 **Status: Phase 1 — personal/local scaffold, not yet validated against
 real IR hardware.** See `docs/testing-safely.md` before enabling this on
