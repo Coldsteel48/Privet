@@ -53,11 +53,14 @@ SettingsPage::SettingsPage(QWidget* parent) : QWidget(parent), runner_(new Enrol
     greeterConfirmationModeCombo_->addItem(tr("Skip confirmation \xe2\x80\x94 authenticate immediately"),
                                             QStringLiteral("none"));
     greeterConfirmationModeCombo_->setToolTip(
-        tr("Only applies when the clickable box above can't be shown \xe2\x80\x94 e.g. the console "
-           "login prompt, or a graphical greeter such as GDM, SDDM, LightDM, or COSMIC's "
-           "(via greetd). Those run before any desktop session exists, so there's no display "
-           "for a mouse-driven box to draw into and this decides what happens instead."));
+        tr("Applies at the console login prompt or a graphical greeter such as GDM, SDDM, "
+           "LightDM, or COSMIC's (via greetd) \xe2\x80\x94 contexts that run before any desktop "
+           "session exists, so there's no display for a mouse-driven box to draw into. "
+           "Independent of the Confirmation prompt option above, which only governs sessions "
+           "where a display is reachable (e.g. sudo from an already-logged-in session)."));
     form->addRow(tr("At the login screen, when no box is possible:"), greeterConfirmationModeCombo_);
+    connect(greeterConfirmationModeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &SettingsPage::onConfirmationModeChanged);
 
     confirmationTimeoutSpin_ = new QSpinBox(this);
     confirmationTimeoutSpin_->setRange(facial_auth::kMinConfirmationTimeoutMs / 1000,
@@ -118,15 +121,16 @@ void SettingsPage::onCameraModeChanged(int index) {
     lastConfirmedCameraModeIndex_ = index;
 }
 
-// The "at the login screen" choice only means anything when the primary
-// mode is Gui (it's what decides the fallback once the clickable box has
-// already been ruled out as unreachable there) — greyed out rather than
-// hidden for Text/None so its current value stays visible even when it's
-// not the thing in effect.
+// The "at the login screen" choice applies whenever no display is
+// reachable there (console login, most graphical greeters), independent
+// of the general Confirmation prompt mode above — pam_facial.so consults
+// it on its own, not as a Gui-only fallback. The timeout spinner is only
+// irrelevant when neither setting can ever produce a prompt.
 void SettingsPage::onConfirmationModeChanged(int /*index*/) {
     const QString mode = confirmationModeCombo_->currentData().toString();
-    greeterConfirmationModeCombo_->setEnabled(mode == QStringLiteral("gui"));
-    confirmationTimeoutSpin_->setEnabled(mode != QStringLiteral("none"));
+    const QString greeterMode = greeterConfirmationModeCombo_->currentData().toString();
+    confirmationTimeoutSpin_->setEnabled(mode != QStringLiteral("none") ||
+                                          greeterMode != QStringLiteral("none"));
 }
 
 void SettingsPage::onSaveClicked() {

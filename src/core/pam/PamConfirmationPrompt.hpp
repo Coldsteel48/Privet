@@ -134,9 +134,12 @@ inline std::string toLowerAscii(std::string text) {
 // which mirrors this enum so the GUI/Config layer and pam_facial.so agree
 // on the same three choices without pam_facial.so linking Config itself).
 //   Gui:  try the clickable facial-auth-confirm Yes/No box first
-//         (tryGuiConfirmation() in pam_facial.cpp); when no display is
-//         reachable, defer to greeterConfirmationMode below. This is the
-//         default — unchanged from pre-existing behavior.
+//         (tryGuiConfirmation() in pam_facial.cpp); if the helper itself
+//         fails to launch, fall back to the text prompt (still only in
+//         contexts where a display is reachable — see
+//         GreeterConfirmationMode below for the no-display case, which
+//         this mode is never consulted for). This is the default —
+//         unchanged from pre-existing behavior.
 //   Text: always use the plain-text PAM conversation "(y/n)" prompt,
 //         never attempt the GUI box even if a display is reachable.
 //   None: never ask at all — proceed straight to face recognition.
@@ -174,14 +177,15 @@ inline ConfirmationMode readConfirmationMode() {
     return content ? parseConfirmationMode(*content) : ConfirmationMode::Gui;
 }
 
-// Only consulted when confirmationMode == Gui *and* no display is
-// reachable in pam_facial.so's own process (hasDisplayEnv() below) — i.e.
-// exactly the console `login` prompt / graphical-greeter case (including
-// COSMIC via greetd), where the GUI box is structurally unreachable
-// regardless of this setting. Configured via `greeter_confirmation_mode`,
-// independently of `confirmation_mode`, so e.g. `sudo` (where the GUI box
-// can actually appear) can keep asking via the clickable box while the
-// login screen either still asks via text or skips asking altogether.
+// Consulted whenever no display is reachable in pam_facial.so's own
+// process (hasDisplayEnv() below) — i.e. exactly the console `login`
+// prompt / graphical-greeter case (including COSMIC via greetd) — fully
+// independently of `confirmation_mode` above, which governs everywhere a
+// display IS reachable and is never consulted here. Configured via
+// `greeter_confirmation_mode`, so e.g. `sudo` (where the GUI box can
+// actually appear) can keep asking via confirmation_mode while the login
+// screen either still asks via text or skips asking altogether,
+// regardless of what confirmation_mode is set to.
 //   Text: fall back to the plain-text PAM conversation prompt (default,
 //         unchanged pre-existing behavior).
 //   None: skip confirmation and proceed straight to face recognition.

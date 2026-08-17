@@ -41,7 +41,6 @@ protected:
 private slots:
     void onPreviewTick();
     void onEnrollClicked();
-    void onReEnrollClicked();
     void onDeleteClicked();
     void onTestClicked();
     void onGainSliderChanged(int value);
@@ -52,16 +51,16 @@ private:
     void startPreview();
     void stopPreview();
     void startEnroll(bool reEnroll);
+    void setEnrolled(bool enrolled);  // updates enrollButton_'s label/state
     QString currentUsername() const;
     double gainValue() const;  // slider position (0-100) -> multiplier (1.0-6.0)
 
-    enum class PendingAction { None, Enroll, ReEnroll, Delete, Test, SaveGain };
+    enum class PendingAction { None, Enroll, Delete, Test, SaveGain };
 
     EnrollHelperRunner* runner_;
     QLabel* previewLabel_;
     QLabel* statusLabel_;
-    QPushButton* enrollButton_;
-    QPushButton* reEnrollButton_;
+    QPushButton* enrollButton_;  // label/action toggles between Enroll and Re-enroll
     QPushButton* deleteButton_;
     QPushButton* testButton_;
     QSlider* gainSlider_;
@@ -70,4 +69,5 @@ private:
     QTimer* previewTimer_;
     std::unique_ptr<facial_auth::V4L2Camera> camera_;
     PendingAction pendingAction_ = PendingAction::None;
+    bool isEnrolled_ = false;
 };

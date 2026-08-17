@@ -7,6 +7,43 @@ Howdy-style PAM module. No Python or RUST anywhere in the stack.
 real IR hardware.** See `docs/testing-safely.md` before enabling this on
 any real login path.
 
+## Disclaimer
+
+**THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. USE OF
+THIS SOFTWARE IS ENTIRELY AT YOUR OWN RISK.**
+
+This project modifies system authentication (PAM). Misconfiguration,
+a bug, or unexpected interaction with your distribution's specific setup
+can, in principle, lock you out of your own machine, leave a service
+less secure than before, or otherwise cause data loss, downtime, or
+other damage. The safety measures described in this README and in
+`docs/testing-safely.md` (the `sufficient` control flag, the confirmation
+prompt, the fallback to `PAM_AUTHINFO_UNAVAIL`, and so on) are designed
+in good faith to minimize that risk, but no software of this kind can
+guarantee it will be free of defects, and none of those measures
+constitute a warranty or a guarantee of fitness for any particular
+purpose.
+
+**By downloading, building, installing, or using this software, you
+accept full responsibility for any and all consequences of doing so.**
+The author(s) and contributors of this project accept **no liability
+whatsoever** for any damage, data loss, security incident, lockout, or
+other harm, direct or indirect, arising from the use, misuse, or
+inability to use this software — including but not limited to loss of
+access to your system, loss of data, or any consequential or incidental
+damages — even if advised of the possibility of such damage. This
+software is licensed under the GPLv3 (see `LICENSE`), which itself
+disclaims all warranties in Sections 15 and 16; this section restates
+that disclaimer in plain language and does not narrow it.
+
+If you are not comfortable accepting these terms, do not use this
+software — particularly do not add it to any authentication path
+(`sudo`, `login`, a display manager greeter, or especially `sshd`) on a
+machine you cannot afford to be locked out of. Always keep a spare,
+independent way to log in (a root shell, a password fallback, physical
+console access) before testing or deploying this software, as described
+in `docs/testing-safely.md`.
+
 ## What's here
 
 - `pam_facial.so` — a thin PAM module (`auth` only). Deliberately links
@@ -18,9 +55,11 @@ any real login path.
   `src/pam/pam_facial.cpp` for the full rationale.
 - `facial-auth-verify` — does the actual capture + match. Never invoked
   directly; only ever exec'd by `pam_facial.so`.
-- `facial-auth-enroll` — privileged CLI that captures your face and
-  writes the enrollment to `/var/lib/facial-auth/`. Run directly as root,
-  or elevated via `pkexec` by the GUI.
+- `facial-auth-enroll` — privileged CLI that records a short video while
+  you turn your head, buckets the usable frames into several
+  angle-tagged templates, and writes the enrollment to
+  `/var/lib/facial-auth/`. Run directly as root, or elevated via
+  `pkexec` by the GUI.
 - `facial-auth-control` — an unprivileged Qt6 GUI for enrolling/managing
   your face and adjusting settings. Never touches privileged storage
   directly; always goes through `facial-auth-enroll` via `pkexec`.
@@ -89,6 +128,37 @@ step, with distro-appropriate package names/PAM module paths for
 Arch/CachyOS, Debian/Ubuntu, Fedora/RHEL-family, and openSUSE. It never
 touches `/etc/pam.d` — see the script's header and the safety section
 above.
+
+## Enrollment: multi-angle templates
+
+`facial-auth-enroll` records raw frames for a fixed window (default 8s,
+`enroll_video_duration_sec`) while you turn/tilt your head, then
+post-processes the buffer into several angle-bucketed templates instead
+of one averaged, Center-only template — a 3x3 yaw/pitch grid, self-
+calibrating via tercile splits of the detector's landmark-derived
+yaw/pitch ratios rather than a hardcoded angle threshold. Verification
+scans every stored template per capture attempt and takes the best
+match, so a live probe from any angle only needs to resemble its closest
+template rather than a single frontal average — this directly raises the
+per-attempt match probability, compounding with the capture-retry budget
+below.
+
+Degrades gracefully with less head motion or fewer usable frames: 12-35
+usable frames falls back to yaw-only (Left/Center/Right), under 12 falls
+back to a single Center template. The on-disk format bumped to v2 for
+this (`EmbeddingStore::saveAll`/`loadAll`), but v1 files are still read
+correctly as a single Center-tagged template — existing enrollments keep
+working without a forced re-enrollment. The GUI's Enroll button relabels
+itself "Re-enroll" once it learns an enrollment exists (from a successful
+enroll, a "already enrolled" result, or a successful Test), rather than
+being a separate button.
+
+Each capture attempt during login (`max_capture_attempts`, default 20)
+also gets a real budget rather than the original 3: on IR hardware that
+strobes its illuminator on alternating frames, detection empirically
+succeeds only ~25% of the time even when lit, so a small budget could
+fail almost every attempt regardless of tuning. See
+`config/facial-auth.conf.example` for both settings' full rationale.
 
 ## Camera setup — you need to do this first
 

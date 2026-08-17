@@ -40,25 +40,23 @@ EnrollmentPage::EnrollmentPage(QWidget* parent)
     statusLabel_->setWordWrap(true);
 
     enrollButton_ = new QPushButton(tr("Enroll"), this);
-    reEnrollButton_ = new QPushButton(tr("Re-enroll"), this);
     deleteButton_ = new QPushButton(tr("Delete Enrollment"), this);
     testButton_ = new QPushButton(tr("Test Recognition"), this);
     // Visibility/enablement never depends on a privileged status query (see
-    // the class comment) — Re-enroll only appears once we actually learn
-    // (from an enroll/re-enroll result) that an enrollment exists; the rest
-    // are always available and just report a graceful outcome (e.g.
-    // Test -> "unavailable" or Delete -> a no-op) if there's nothing to act on.
-    reEnrollButton_->setVisible(false);
+    // the class comment) — enrollButton_ starts out as "Enroll" and flips to
+    // "Re-enroll" once we actually learn (from an enroll result, a failed
+    // enroll that reports "already enrolled", or a successful test) that an
+    // enrollment exists; the rest are always available and just report a
+    // graceful outcome (e.g. Test -> "unavailable" or Delete -> a no-op) if
+    // there's nothing to act on.
 
     connect(enrollButton_, &QPushButton::clicked, this, &EnrollmentPage::onEnrollClicked);
-    connect(reEnrollButton_, &QPushButton::clicked, this, &EnrollmentPage::onReEnrollClicked);
     connect(deleteButton_, &QPushButton::clicked, this, &EnrollmentPage::onDeleteClicked);
     connect(testButton_, &QPushButton::clicked, this, &EnrollmentPage::onTestClicked);
     connect(runner_, &EnrollHelperRunner::finished, this, &EnrollmentPage::onHelperFinished);
 
     auto* buttonRow = new QHBoxLayout();
     buttonRow->addWidget(enrollButton_);
-    buttonRow->addWidget(reEnrollButton_);
     buttonRow->addWidget(deleteButton_);
     buttonRow->addWidget(testButton_);
 
@@ -221,11 +219,12 @@ void EnrollmentPage::onSaveGainClicked() {
 }
 
 void EnrollmentPage::onEnrollClicked() {
-    startEnroll(false);
+    startEnroll(isEnrolled_);
 }
 
-void EnrollmentPage::onReEnrollClicked() {
-    startEnroll(true);
+void EnrollmentPage::setEnrolled(bool enrolled) {
+    isEnrolled_ = enrolled;
+    enrollButton_->setText(enrolled ? tr("Re-enroll") : tr("Enroll"));
 }
 
 void EnrollmentPage::startEnroll(bool reEnroll) {
@@ -257,7 +256,7 @@ void EnrollmentPage::startEnroll(bool reEnroll) {
     // to re-prompt on every single enroll click.
     const QString cameraMode = rgbMode ? QStringLiteral("rgb") : QStringLiteral("ir");
 
-    pendingAction_ = reEnroll ? PendingAction::ReEnroll : PendingAction::Enroll;
+    pendingAction_ = PendingAction::Enroll;
     statusLabel_->setText(tr("Recording\xe2\x80\xa6 follow the head-turn prompt, this takes a few "
                               "seconds (a polkit authentication prompt may appear first)"));
     // The illumination value currently on the slider is persisted as part
@@ -288,7 +287,6 @@ void EnrollmentPage::onHelperFinished(EnrollHelperRunner::Result result) {
 
     switch (action) {
         case PendingAction::Enroll:
-        case PendingAction::ReEnroll:
             if (result.ok) {
                 statusLabel_->setText(tr("Enrolled successfully (%1 samples across %2 angle "
                                           "template%3, %4 mode, %5).")
@@ -297,10 +295,10 @@ void EnrollmentPage::onHelperFinished(EnrollHelperRunner::Result result) {
                                            .arg(result.angleBuckets == 1 ? QString() : QStringLiteral("s"))
                                            .arg(result.cameraMode)
                                            .arg(result.enrolledAt));
-                reEnrollButton_->setVisible(true);
+                setEnrolled(true);
             } else if (result.message.contains(QLatin1String("already enrolled"))) {
-                statusLabel_->setText(tr("Already enrolled \xe2\x80\x94 use Re-enroll to overwrite."));
-                reEnrollButton_->setVisible(true);
+                statusLabel_->setText(tr("Already enrolled \xe2\x80\x94 press Re-enroll to overwrite."));
+                setEnrolled(true);
             } else {
                 statusLabel_->setText(tr("Enrollment failed: %1").arg(result.message));
             }
@@ -310,7 +308,7 @@ void EnrollmentPage::onHelperFinished(EnrollHelperRunner::Result result) {
         case PendingAction::Delete:
             statusLabel_->setText(result.ok ? tr("Enrollment deleted.")
                                              : tr("Delete failed: %1").arg(result.message));
-            if (result.ok) reEnrollButton_->setVisible(false);
+            if (result.ok) setEnrolled(false);
             break;
 
         case PendingAction::Test:
@@ -318,12 +316,12 @@ void EnrollmentPage::onHelperFinished(EnrollHelperRunner::Result result) {
                 statusLabel_->setText(tr("Test failed to run: %1").arg(result.message));
             } else if (result.matchOutcome == QLatin1String("true")) {
                 statusLabel_->setText(tr("\xe2\x9c\x93 Recognized \xe2\x80\x94 this would succeed at login."));
-                reEnrollButton_->setVisible(true);  // a match implies an enrollment exists
+                setEnrolled(true);  // a match implies an enrollment exists
             } else if (result.matchOutcome == QLatin1String("false")) {
                 statusLabel_->setText(
                     tr("A face was seen but didn't match your enrollment. Try adjusting "
                        "illumination, or Re-enroll if your appearance has changed."));
-                reEnrollButton_->setVisible(true);
+                setEnrolled(true);
             } else {
                 statusLabel_->setText(
                     tr("No face detected \xe2\x80\x94 not enrolled, camera unavailable, or no "

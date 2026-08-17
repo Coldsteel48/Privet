@@ -189,28 +189,38 @@ facial-auth-control's Settings page exposes three controls (persisted as
 `ConfirmationMode`/`GreeterConfirmationMode` in
 `src/core/pam/PamConfirmationPrompt.hpp`):
 
-- **Confirmation prompt** — the primary mode:
-  - *Clickable Yes/No box (mouse, recommended)* — today's default
-    behavior: try the GUI box, and where it can't appear, fall back per
-    the second control below.
+These two controls apply to mutually exclusive contexts and neither one
+falls back to the other — `confirmCameraUseViaPam()` checks
+`hasDisplayEnv()` once up front and picks which setting governs before
+consulting either:
+
+- **Confirmation prompt** — governs whenever a display is reachable
+  (in practice: `sudo` run from an already-logged-in graphical session
+  with the env-preserving drop-in above):
+  - *Clickable Yes/No box (mouse, recommended)* — default: try the GUI
+    box; if the helper itself fails to launch, fall back to the text
+    prompt (still in this same display-reachable context — it does
+    *not* consult the login-screen setting below).
   - *Plain text Y/N prompt* — always use the PAM conversation's
-    `(y/n)` prompt, everywhere, never attempting the GUI box even where
-    it could appear (e.g. `sudo` with the env-preserving drop-in above).
+    `(y/n)` prompt here, never attempting the GUI box even though it
+    could appear.
   - *No confirmation — authenticate immediately* — skip asking
-    altogether, everywhere; face recognition just runs. This bypasses
-    `PAM_CONV` entirely, so it also works on a host process that
-    provides no conversation at all.
-- **At the login screen, when no box is possible** — only consulted when
-  the primary mode above is *Clickable Yes/No box* and no display was
-  reachable for it (console `login`, or a graphical greeter's login
-  screen — including COSMIC via greetd): either fall back to the text
-  prompt (default, unchanged), or skip confirmation and authenticate
-  immediately in that context specifically, without changing how `sudo`
-  or any other display-capable context behaves.
+    altogether; face recognition just runs. This bypasses `PAM_CONV`
+    entirely, so it also works on a host process that provides no
+    conversation at all.
+- **At the login screen, when no box is possible** — governs whenever no
+  display is reachable at all (console `login`, or a graphical greeter's
+  login screen — including COSMIC via greetd), *independent* of whatever
+  the Confirmation prompt control above is set to:
+  - *Plain text Y/N prompt* (default) — fall back to the text prompt.
+  - *No confirmation — authenticate immediately* — skip confirmation and
+    authenticate immediately in that context specifically, without
+    changing how `sudo` or any other display-capable context behaves.
 - **Confirmation timeout** — how long (1-300s, default 20s) pam_facial.so
-  waits for an answer before treating silence as a decline. Not
-  consulted when the primary mode is *No confirmation*. This field used
-  to only be settable by hand-editing the config file, and — being
+  waits for an answer before treating silence as a decline. Enabled
+  whenever either control above can still produce a prompt (i.e.
+  disabled only when *both* are set to skip confirmation). This field
+  used to only be settable by hand-editing the config file, and — being
   absent from `Config` — was silently dropped the next time anything else
   was saved through the GUI; it's now a proper `Config` field (see
   `confirmationTimeoutSec` in `src/core/config/Config.hpp`) so it
@@ -220,4 +230,13 @@ This is what actually answers "can the login screen be mouse-only?" —
 it can't show a mouse-driven box (no display is reachable there, see
 above), but it can skip the prompt altogether by setting the second
 control to *authenticate immediately*, which removes the keyboard `y` +
-Enter step at the login screen entirely.
+Enter step at the login screen entirely, regardless of what the
+Confirmation prompt control is set to.
+
+While a confirmation prompt is on-screen and a controlling terminal
+exists (console `login`, or `sudo` from a terminal), `pam_facial.so`
+also hands terminal foreground-process-group control to the forked child
+running the prompt, and takes it back before returning either way — see
+the comments around `tcsetpgrp()` in `confirmCameraUseViaPam()`. Without
+this, the child's own exit would orphan the terminal's process group and
+break the password-prompt fallback that runs after a decline.

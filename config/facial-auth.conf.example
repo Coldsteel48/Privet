@@ -49,24 +49,30 @@ require_ir = true
 # clamped to [1, 300] seconds.
 confirmation_timeout_sec = 20
 
-# How the same prompt is actually presented — also settable from
+# How the same prompt is actually presented when a display IS reachable
+# (in practice: sudo run from an already-logged-in graphical session with
+# DISPLAY/WAYLAND_DISPLAY preserved) — also settable from
 # facial-auth-control's Settings page. See ConfirmationMode in
-# src/core/pam/PamConfirmationPrompt.hpp.
+# src/core/pam/PamConfirmationPrompt.hpp. Has no effect at the console
+# login prompt or a graphical greeter (no display reachable there at
+# all) — see greeter_confirmation_mode below for that context instead.
 #   gui  - try a real clickable Yes/No box first (facial-auth-confirm);
-#          falls back per greeter_confirmation_mode below when no display
-#          is reachable (console login, most graphical greeters). Default.
-#   text - always use the plain-text prompt above, never attempt the box.
+#          if the helper itself fails to launch, falls back to the
+#          plain-text prompt (still only in this display-reachable
+#          context). Default.
+#   text - always use the plain-text prompt, never attempt the box.
 #   none - never ask at all; go straight to face recognition.
 confirmation_mode = gui
 
-# Only consulted when confirmation_mode = gui *and* no display was
-# reachable for the box (i.e. exactly the console `login` prompt or a
-# graphical greeter's login screen, including COSMIC via greetd — those
-# run before any desktop session exists, so the box is structurally
-# unreachable there regardless of this setting). Independent of
-# confirmation_mode so e.g. sudo can still show the clickable box while
-# the login screen behaves differently.
-#   text - fall back to the plain-text prompt above. Default.
+# How the prompt is presented at the console `login` prompt or a
+# graphical greeter's login screen (including COSMIC via greetd) — i.e.
+# whenever no display is reachable at all, since those run before any
+# desktop session exists and a mouse-driven box has nothing to draw into.
+# Fully independent of confirmation_mode above: this setting governs the
+# login screen regardless of what confirmation_mode is set to, and
+# confirmation_mode governs everywhere a display is reachable regardless
+# of what this is set to — neither one is a fallback for the other.
+#   text - fall back to the plain-text prompt. Default.
 #   none - skip confirmation and go straight to face recognition.
 greeter_confirmation_mode = text
 
