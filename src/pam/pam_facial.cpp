@@ -25,6 +25,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <optional>
 #include <string>
 #include <thread>
@@ -167,82 +168,44 @@ bool doTextConfirmation(const struct pam_conv* conv) {
     return affirmative;
 }
 
-// Asks the user whether it's OK to open the camera for this
-// authentication attempt. Two independent settings govern this,
-// depending on whether a display is reachable:
-//  - display reachable (e.g. sudo from an already-logged-in session):
-//    confirmation_mode decides — a real Yes/No GUI box
-//    (tryGuiConfirmation()), a text prompt, or no prompt at all.
-//  - no display reachable (console login, or a graphical greeter such as
-//    GDM/SDDM/LightDM/COSMIC's via greetd — collectively "the login
-//    screen"): greeter_confirmation_mode decides instead — text prompt
-//    or no prompt — regardless of what confirmation_mode is set to.
-// Returns true only on an explicit "yes" obtained within the configured
-// answer timeout (see readConfirmationTimeoutMs(), default 20s) — any
-// missing conv, conversation error, timeout, or non-affirmative answer
-// declines. This runs before fork()/execve()'ing facial-auth-verify, so
-// it's the only point in the whole pam_facial.so chain that has access
-// to `pamh`.
-//
-// Both the GUI attempt and the conv() call happen in a forked child
-// rather than inline: PAM defines no timeout on a conversation call, and
-// neither the front end on the other end of it (a terminal, or a
+// Runs `computeResult` (expected to return a single application-defined
+// result byte) in a forked child, enforcing the confirmation-answer
+// timeout via a pipe + poll() rather than trusting the child to bound its
+// own runtime — PAM defines no timeout on a conversation call, and
+// neither the front end on the other end of one (a terminal, or a
 // greeter's IPC channel) nor a GUI toolkit waiting on user input is code
-// this module controls or can trust to respond promptly. The parent
-// enforces the actual wall-clock deadline via a pipe and, on timeout,
-// SIGKILLs the child's whole process group (not just the child itself —
+// this module controls or can trust to respond promptly. On timeout, the
+// child's whole process group is SIGKILLed (not just the child itself —
 // see setpgid() below) so an unanswered GUI dialog can never linger on
-// screen after this module has already moved on. This module must never
-// be the thing that leaves a login prompt hanging, mirroring the
-// fork/timeout/kill pattern already used below for facial-auth-verify.
-bool confirmCameraUseViaPam(pam_handle_t* pamh, const char* username) {
-    // No display reachable at all means we're at the login screen (console
-    // login, or a graphical greeter — see the function comment above), so
-    // greeter_confirmation_mode governs from here on, independent of
-    // confirmation_mode: the two settings apply to mutually exclusive
-    // contexts and neither one falls back to the other.
-    const bool atLoginScreen =
-        !facial_auth::hasDisplayEnv(getenv("DISPLAY"), getenv("WAYLAND_DISPLAY"));
-
-    // "Never ask" resolves before ever touching PAM_CONV (unlike the text
-    // paths below) so a host process that happens not to provide a
-    // conversation structure still doesn't block these modes from working.
-    const bool neverAsk =
-        atLoginScreen ? facial_auth::readGreeterConfirmationMode() ==
-                             facial_auth::GreeterConfirmationMode::None
-                       : facial_auth::readConfirmationMode() == facial_auth::ConfirmationMode::None;
-    if (neverAsk) {
-        return true;
-    }
-
-    const struct pam_conv* conv = nullptr;
-    if (pam_get_item(pamh, PAM_CONV, reinterpret_cast<const void**>(&conv)) != PAM_SUCCESS ||
-        conv == nullptr || conv->conv == nullptr) {
-        safeSyslog(LOG_WARNING, "pam_facial: no PAM conversation available, declining camera use");
-        return false;
-    }
-
+// screen after this module has already moved on. Returns the child's
+// result byte, or std::nullopt if it never answered (timeout, fork
+// failure, or an unreaped/killed child).
+//
+// `needsTerminalForeground` governs whether the child is additionally
+// handed the controlling terminal's foreground process group for the
+// call's duration: this is required for a path that actually reads from
+// the terminal (PAM's text conv() prompt in doTextConfirmation()) and
+// must be false for anything that doesn't (tryGuiConfirmation() talks to
+// a GUI toolkit over DISPLAY/WAYLAND_DISPLAY, never the tty). Do not pass
+// true speculatively "just in case" a path might need it — a real
+// incident on 2026-08-17 traced a `sudo` terminal becoming completely
+// unresponsive (pam_unix's subsequent password conv() failing outright,
+// regardless of how the face-recognition prompt was answered) back to
+// exactly that: the GUI confirmation path was being granted terminal
+// foreground it never used. Restricting the handoff to only the callers
+// that actually read the tty removes that whole failure class for the
+// (default) GUI path, whatever the exact kernel-level mechanism was.
+// ttyFd stays -1 (all tty handling a no-op) when there's no controlling
+// terminal to begin with, e.g. a graphical greeter's PAM helper.
+std::optional<char> runConfirmationChild(bool needsTerminalForeground,
+                                          const std::function<char()>& computeResult) {
     int pipeFds[2];
     if (pipe(pipeFds) != 0) {
         safeSyslog(LOG_ERR, "pam_facial: pipe() failed, declining camera use");
-        return false;
+        return std::nullopt;
     }
 
-    // The child below moves into its own process group so the timeout
-    // path can SIGKILL the whole group (child + any GUI helper
-    // grandchild) without touching this process. That desyncs it from
-    // the controlling terminal's foreground process group — left
-    // uncorrected, the terminal is orphaned the moment the child touches
-    // it and exits, and *this* process can no longer read from it
-    // afterward either. Since pam_facial is `sufficient`, a decline falls
-    // through to the next stacked module (e.g. pam_unix asking for a
-    // password on the same tty), so an orphaned terminal here breaks that
-    // fallback, not just this module. Hand the terminal to the child's
-    // group for the duration of the prompt and take it back before
-    // returning, regardless of outcome. ttyFd stays -1 (all of this a
-    // no-op) when there's no controlling terminal to begin with, e.g. a
-    // graphical greeter's PAM helper.
-    const int ttyFd = open("/dev/tty", O_RDWR | O_NOCTTY);
+    const int ttyFd = needsTerminalForeground ? open("/dev/tty", O_RDWR | O_NOCTTY) : -1;
     const pid_t originalFgPgrp = (ttyFd >= 0) ? tcgetpgrp(ttyFd) : -1;
 
     const pid_t pid = fork();
@@ -253,7 +216,7 @@ bool confirmCameraUseViaPam(pam_handle_t* pamh, const char* username) {
             close(ttyFd);
         }
         safeSyslog(LOG_ERR, "pam_facial: fork() failed, declining camera use");
-        return false;
+        return std::nullopt;
     }
 
     // Both branches call setpgid() for the same pid, redundantly: this is
@@ -264,44 +227,8 @@ bool confirmCameraUseViaPam(pam_handle_t* pamh, const char* username) {
     // first wins, and the outcome is identical either way.
     if (pid == 0) {
         setpgid(0, 0);
-
-        // Child: owns the actual (unbounded) confirmation call — GUI or
-        // conv() text prompt. Writes a single result byte back and
-        // exits; never reads the parent's mind about whether it gave up
-        // and moved on already.
         close(pipeFds[0]);
-
-        char result = 0;
-        if (atLoginScreen) {
-            // neverAsk (greeter_confirmation_mode = none) was already
-            // resolved above without forking, so the only possibility
-            // left here is greeter_confirmation_mode = text.
-            result = doTextConfirmation(conv) ? 1 : 0;
-        } else {
-            switch (facial_auth::readConfirmationMode()) {
-                case facial_auth::ConfirmationMode::None:
-                    result = 1;  // unreachable: neverAsk already handled this above
-                    break;
-                case facial_auth::ConfirmationMode::Text:
-                    result = doTextConfirmation(conv) ? 1 : 0;
-                    break;
-                case facial_auth::ConfirmationMode::Gui:
-                default:
-                    if (const std::optional<bool> guiAnswer = tryGuiConfirmation(username);
-                        guiAnswer.has_value()) {
-                        result = *guiAnswer ? 1 : 0;
-                    } else {
-                        // A display is reachable here (atLoginScreen is
-                        // false) but the GUI helper itself failed to run
-                        // — fall back to a text prompt rather than
-                        // declining outright. greeter_confirmation_mode
-                        // doesn't apply: that setting is strictly about
-                        // the no-display login-screen case.
-                        result = doTextConfirmation(conv) ? 1 : 0;
-                    }
-                    break;
-            }
-        }
+        const char result = computeResult();
         const ssize_t written = write(pipeFds[1], &result, 1);
         (void)written;  // best-effort: parent may already be gone on timeout
         _exit(0);
@@ -363,10 +290,113 @@ bool confirmCameraUseViaPam(pam_handle_t* pamh, const char* username) {
         close(ttyFd);
     }
 
-    if (gotAnswer && result == 0) {
+    return gotAnswer ? std::optional<char>(result) : std::nullopt;
+}
+
+// Runs doTextConfirmation() in a terminal-foreground-owning child and
+// folds the result into confirmCameraUseViaPam()'s bool contract, logging
+// a decline the same way every caller below needs.
+bool runTextConfirmation(const struct pam_conv* conv) {
+    const std::optional<char> result =
+        runConfirmationChild(/*needsTerminalForeground=*/true,
+                              [conv]() -> char { return doTextConfirmation(conv) ? 1 : 0; });
+    if (!result.has_value()) {
+        return false;
+    }
+    if (*result == 0) {
         safeSyslog(LOG_INFO, "pam_facial: camera authentication declined by user");
     }
-    return gotAnswer && result == 1;
+    return *result == 1;
+}
+
+// Asks the user whether it's OK to open the camera for this
+// authentication attempt. Two independent settings govern this,
+// depending on whether a display is reachable:
+//  - display reachable (e.g. sudo from an already-logged-in session):
+//    confirmation_mode decides — a real Yes/No GUI box
+//    (tryGuiConfirmation()), a text prompt, or no prompt at all.
+//  - no display reachable (console login, or a graphical greeter such as
+//    GDM/SDDM/LightDM/COSMIC's via greetd — collectively "the login
+//    screen"): greeter_confirmation_mode decides instead — text prompt
+//    or no prompt — regardless of what confirmation_mode is set to.
+// Returns true only on an explicit "yes" obtained within the configured
+// answer timeout (see readConfirmationTimeoutMs(), default 20s) — any
+// missing conv, conversation error, timeout, or non-affirmative answer
+// declines. This runs before fork()/execve()'ing facial-auth-verify, so
+// it's the only point in the whole pam_facial.so chain that has access
+// to `pamh`.
+bool confirmCameraUseViaPam(pam_handle_t* pamh, const char* username) {
+    // No display reachable at all means we're at the login screen (console
+    // login, or a graphical greeter — see the function comment above), so
+    // greeter_confirmation_mode governs from here on, independent of
+    // confirmation_mode: the two settings apply to mutually exclusive
+    // contexts and neither one falls back to the other.
+    const bool atLoginScreen =
+        !facial_auth::hasDisplayEnv(getenv("DISPLAY"), getenv("WAYLAND_DISPLAY"));
+
+    // "Never ask" resolves before ever touching PAM_CONV (unlike the text
+    // paths below) so a host process that happens not to provide a
+    // conversation structure still doesn't block these modes from working.
+    const bool neverAsk =
+        atLoginScreen ? facial_auth::readGreeterConfirmationMode() ==
+                             facial_auth::GreeterConfirmationMode::None
+                       : facial_auth::readConfirmationMode() == facial_auth::ConfirmationMode::None;
+    if (neverAsk) {
+        return true;
+    }
+
+    const struct pam_conv* conv = nullptr;
+    if (pam_get_item(pamh, PAM_CONV, reinterpret_cast<const void**>(&conv)) != PAM_SUCCESS ||
+        conv == nullptr || conv->conv == nullptr) {
+        safeSyslog(LOG_WARNING, "pam_facial: no PAM conversation available, declining camera use");
+        return false;
+    }
+
+    if (atLoginScreen) {
+        // neverAsk (greeter_confirmation_mode = none) was already
+        // resolved above without forking, so the only possibility left
+        // here is greeter_confirmation_mode = text.
+        return runTextConfirmation(conv);
+    }
+
+    switch (facial_auth::readConfirmationMode()) {
+        case facial_auth::ConfirmationMode::None:
+            return true;  // unreachable: neverAsk already handled this above
+        case facial_auth::ConfirmationMode::Text:
+            return runTextConfirmation(conv);
+        case facial_auth::ConfirmationMode::Gui:
+        default:
+            break;
+    }
+
+    // GUI mode: first attempt is a GUI-only child that never touches the
+    // terminal's foreground process group (see runConfirmationChild's
+    // comment for why that matters) — result byte 2 is this function's
+    // own sentinel for "GUI unreachable, caller should fall back to
+    // text", never something tryGuiConfirmation() itself produces.
+    const std::optional<char> guiResult =
+        runConfirmationChild(/*needsTerminalForeground=*/false, [username]() -> char {
+            if (const std::optional<bool> answer = tryGuiConfirmation(username);
+                answer.has_value()) {
+                return *answer ? 1 : 0;
+            }
+            return 2;
+        });
+    if (!guiResult.has_value()) {
+        return false;  // the GUI attempt itself timed out — decline, same as any other timeout
+    }
+    if (*guiResult != 2) {
+        if (*guiResult == 0) {
+            safeSyslog(LOG_INFO, "pam_facial: camera authentication declined by user");
+        }
+        return *guiResult == 1;
+    }
+    // A display is reachable here (atLoginScreen is false) but the GUI
+    // helper itself failed to run — fall back to a text prompt (its own
+    // fresh timeout window) rather than declining outright.
+    // greeter_confirmation_mode doesn't apply: that setting is strictly
+    // about the no-display login-screen case.
+    return runTextConfirmation(conv);
 }
 
 // Waits for `pid` with a hard wall-clock timeout, polling waitpid(WNOHANG)
