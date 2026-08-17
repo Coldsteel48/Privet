@@ -37,6 +37,18 @@
 camera_mode = ir
 require_ir = true
 
+# How long (seconds) pam_facial.so waits for a y/n answer to its
+# "Authenticate using face recognition? (y/n)" prompt before treating
+# silence as a decline
+# and falling through to your password prompt without opening the camera.
+# Unlike every other key in this file, this one is read by pam_facial.so
+# itself (not facial-auth-verify) — see readConfirmationTimeoutMs() in
+# src/core/pam/PamConfirmationPrompt.hpp — since the prompt happens before
+# facial-auth-verify is even started. Missing key, a non-positive value,
+# or anything unparsable all fall back to the 20s default; values are
+# clamped to [1, 300] seconds.
+confirmation_timeout_sec = 20
+
 # Must match your IR node's actual (and often only) supported resolution
 # exactly — see the Logi 4K Stream Edition example above (340x340).
 frame_width = 340

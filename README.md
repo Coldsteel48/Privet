@@ -31,6 +31,23 @@ any real login path.
 
 ## Safety: this can never lock you out (by design)
 
+- `pam_facial.so` never opens the camera silently: it first asks
+  "Authenticate using face recognition?" and only proceeds on an explicit
+  yes. Where a display is reachable (in practice: `sudo` run from an
+  already-logged-in graphical session, with `DISPLAY`/`WAYLAND_DISPLAY`
+  preserved — see `docs/testing-safely.md`) this is a real clickable
+  Yes/No box, shown by a separate, privilege-dropped `facial-auth-confirm`
+  helper rather than by `pam_facial.so` itself, which still links nothing
+  but `libpam`. Everywhere else (console `login`, graphical greeters, or
+  `sudo` without a preserved display) it falls back to the PAM
+  conversation's text prompt, "Authenticate using face recognition?
+  (y/n): ". Anything but an explicit yes — a bare Enter, "n", a closed
+  dialog, no conversation/display available at all, or no answer within
+  20 seconds — declines and falls through to your normal password prompt
+  without ever touching the camera. The whole confirmation step runs in a
+  forked child (process group) so a stuck/unresponsive front end can't
+  hold the login flow open forever either. See `confirmCameraUseViaPam()`
+  in `src/pam/pam_facial.cpp`.
 - `pam_facial.so` returns `PAM_SUCCESS` **only** on a confident face
   match. Every other outcome — missing camera, no enrollment, a timeout,
   an internal error, an unexpected exception — resolves to
@@ -42,9 +59,10 @@ any real login path.
 - Read `docs/testing-safely.md` and use `scripts/test-harness.sh` before
   adding this to any real service. Never add it to `sshd` first.
 - `facial-auth-control`'s "System Login" tab can also do this for you,
-  gated: it only ever offers a fixed allow-list of services (`sudo` and
-  local greeters — never `sshd`, never a typed-in name — see
-  `src/core/pam/PamServiceConfig.hpp`), requires a typed confirmation,
+  gated: it only ever offers a fixed allow-list of services (`sudo`, the
+  console `login` prompt, and local greeters — never `sshd`, never a
+  typed-in name — see `src/core/pam/PamServiceConfig.hpp`), requires a
+  typed confirmation,
   and — enforced by the privileged helper itself, not the GUI — runs 5
   fresh recognition attempts and refuses to write anything unless at
   least 4 match. It never touches a line it didn't write itself (a

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Facial Auth Control
+GenericName=Face Recognition Login Manager
+Comment=Enroll and manage pam_facial recognition-based login
+Exec=facial-auth-control
+Icon=facial-auth-control
+Terminal=false
+StartupNotify=true
+Categories=System;Utility;Security;
+Keywords=face;facial;recognition;login;pam;biometric;camera;

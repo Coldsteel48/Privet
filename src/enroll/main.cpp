@@ -100,8 +100,8 @@ void printUsage() {
         "--pam-enable/--pam-disable wire pam_facial.so into (or out of) a real\n"
         "/etc/pam.d/NAME, always as \"sufficient\" and never removing the existing\n"
         "password auth line. NAME must be on the fixed allow-list in\n"
-        "core/pam/PamServiceConfig.hpp (sudo/gdm-password/sddm/lightdm) — sshd and\n"
-        "anything else are always rejected. --pam-enable additionally requires " +
+        "core/pam/PamServiceConfig.hpp (sudo/login/gdm-password/sddm/lightdm) — sshd\n"
+        "and anything else are always rejected. --pam-enable additionally requires " +
             std::to_string(kPamPreEnableMinPasses) + "/" + std::to_string(kPamPreEnableAttempts) +
             " fresh\n"
             "recognition attempts to actually match first; it never writes to disk otherwise.\n";

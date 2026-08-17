@@ -11,5 +11,6 @@ namespace facial_auth::paths {
 
 inline constexpr const char* kVerifyBinary = "@FACIAL_AUTH_LIBEXEC_DIR@/facial-auth-verify";
 inline constexpr const char* kEnrollBinary = "@FACIAL_AUTH_LIBEXEC_DIR@/facial-auth-enroll";
+inline constexpr const char* kConfirmGuiBinary = "@FACIAL_AUTH_LIBEXEC_DIR@/facial-auth-confirm";
 
 }  // namespace facial_auth::paths

@@ -16,7 +16,14 @@ not the same path on every distro).
 | V4L2 | `v4l-utils` | `libv4l-dev` | `libv4l-devel` | `libv4l-devel` |
 | PAM headers | `pam` (bundled, no split) | `libpam0g-dev` | `pam-devel` | `pam-devel` |
 | Qt6 Widgets | `qt6-base` | `qt6-base-dev` | `qt6-qtbase-devel` | `qt6-base-devel` |
+| Qt6 Wayland platform plugin | `qt6-wayland` | `qt6-wayland` | `qt6-qtwayland` | `qt6-wayland` |
 | polkit | `polkit` | `policykit-1` (or `polkitd`) | `polkit` | `polkit` |
+
+The Wayland platform plugin isn't linked against at build time (Qt loads
+it as a runtime plugin), but without it installed, `facial-auth-confirm`
+(see `src/confirm-gui/`) and `facial-auth-control` silently fail to draw
+under any Wayland session — GNOME, KDE Plasma, Cinnamon, COSMIC, Sway,
+Hyprland, etc. — even though the build itself only needs Qt6 Widgets.
 
 Minimum OpenCV version is **4.5.4** (when `cv::FaceDetectorYN` /
 `cv::FaceRecognizerSF` landed in the `objdetect` module) — the CMake
@@ -26,25 +33,25 @@ configure step fails with a clear message if your OpenCV is older.
 
 **Arch / CachyOS / Manjaro:**
 ```sh
-sudo pacman -S base-devel cmake pkgconf opencv v4l-utils pam qt6-base polkit
+sudo pacman -S base-devel cmake pkgconf opencv v4l-utils pam qt6-base qt6-wayland polkit
 ```
 
 **Debian / Ubuntu / derivatives:**
 ```sh
 sudo apt install build-essential cmake pkg-config libopencv-dev libv4l-dev \
-                  libpam0g-dev qt6-base-dev policykit-1
+                  libpam0g-dev qt6-base-dev qt6-wayland policykit-1
 ```
 
 **Fedora / RHEL / CentOS Stream / Rocky / Alma:**
 ```sh
 sudo dnf install gcc-c++ cmake pkgconfig opencv-devel libv4l-devel \
-                  pam-devel qt6-qtbase-devel polkit
+                  pam-devel qt6-qtbase-devel qt6-qtwayland polkit
 ```
 
 **openSUSE:**
 ```sh
 sudo zypper install patterns-devel-C-C++-devel_C_C++ cmake pkgconf \
-                     opencv-devel libv4l-devel pam-devel qt6-base-devel polkit
+                     opencv-devel libv4l-devel pam-devel qt6-base-devel qt6-wayland polkit
 ```
 
 ## `PAM_SECURITY_DIR` — set this if the CMake default guesses wrong

@@ -46,6 +46,19 @@ FAKE_VERIFY_EXIT_CODE=2 scripts/test-harness.sh   # simulate "unavailable" -> PA
 FAKE_VERIFY_SLEEP_MS=20000 scripts/test-harness.sh  # exceeds the 8s outer timeout -> killed, PAM_AUTHINFO_UNAVAIL
 ```
 
+Before any of the above, `pam_facial.so` now asks a "Authenticate using
+face recognition? (y/n)" Yes/No prompt over the PAM conversation and only opens the
+camera on an explicit "y"/"yes" — see `confirmCameraUseViaPam()` in
+`src/pam/pam_facial.cpp`. The harness auto-answers "y" so the scenarios
+above still exercise the full fork/exec path non-interactively; set
+`PAM_TEST_HARNESS_DECLINE=1` to instead simulate a user declining (always
+falls through to `PAM_AUTHINFO_UNAVAIL`, camera never opened):
+
+```
+PAM_TEST_HARNESS_DECLINE=1 scripts/test-harness.sh   # simulate declining the prompt -> PAM_AUTHINFO_UNAVAIL, camera untouched
+PAM_TEST_HARNESS_DELAY_MS=25000 scripts/test-harness.sh  # exceeds the 20s confirmation timeout -> declined, camera untouched
+```
+
 To test the real module against a real camera/enrollment instead:
 
 ```
@@ -63,6 +76,9 @@ sensible result and — critically — never hangs:
 - `facial-auth-verify` killed/crashing (simulate via `FAKE_VERIFY_EXIT_CODE`
   set to something unexpected, or a signal)
 - The outer-timeout path (`FAKE_VERIFY_SLEEP_MS` above the 8s backstop)
+- The confirmation-prompt timeout path (`PAM_TEST_HARNESS_DELAY_MS` above
+  the 20s confirmation deadline) — confirm it declines cleanly rather than
+  hanging, and that the forked child gets reaped, not left as a zombie
 
 ## 5. Only then, add it to a real stack — locally first
 
@@ -88,10 +104,10 @@ privileged helper (`facial-auth-enroll --pam-enable`, see
 `src/core/pam/PamServiceConfig.hpp` and `runPamEnable` in
 `src/enroll/main.cpp`) rather than left to a careful hand-edit:
 
-- Only a fixed allow-list of services is ever offered — `sudo` and local
-  greeters (`gdm-password`, `sddm`, `lightdm`). `sshd` is not on the list
-  and there is no free-text field, so it is never reachable from the GUI
-  at all.
+- Only a fixed allow-list of services is ever offered — `sudo`, the
+  console `login` prompt, and local greeters (`gdm-password`, `sddm`,
+  `lightdm`). `sshd` is not on the list and there is no free-text field,
+  so it is never reachable from the GUI at all.
 - Clicking Enable requires a typed `CONFIRM`, plus an explicit
   acknowledgement that you have a spare way in.
 - Before writing anything, the helper itself (not the GUI) runs 5 fresh
@@ -110,3 +126,55 @@ privileged helper (`facial-auth-enroll --pam-enable`, see
   the tool won't touch automatically.
 
 Keep the spare root shell open regardless of which path you use.
+
+## 6. Seeing the clickable Yes/No box instead of the text prompt
+
+`pam_facial.so`'s confirmation step (`confirmCameraUseViaPam()` in
+`src/pam/pam_facial.cpp`) tries a real GUI Yes/No box — a separate,
+privilege-dropped `facial-auth-confirm` helper, never linked into
+`pam_facial.so` itself — before falling back to the PAM conversation's
+plain-text prompt. It only attempts the GUI when `DISPLAY` or
+`WAYLAND_DISPLAY` is set in `pam_facial.so`'s own process environment at
+that moment (`hasDisplayEnv()` in `src/core/pam/PamConfirmationPrompt.hpp`).
+
+In practice that means:
+
+- **Console `login`, and graphical greeters (`gdm-password`/`sddm`/
+  `lightdm`, including COSMIC via greetd)**: no display is reachable at
+  PAM-conversation time for an arbitrary child process to draw into, so
+  these always use the text prompt. This is expected, not a bug — see
+  the plan discussion in `src/pam/pam_facial.cpp`'s comments for why
+  patching a specific greeter to render this differently isn't pursued
+  here.
+- **`sudo`, run from an already-logged-in graphical session**: this is
+  the one place the GUI box can realistically appear, but most distros'
+  default sudoers config (`Defaults env_reset`) strips `DISPLAY`/
+  `WAYLAND_DISPLAY`/`XAUTHORITY`/`XDG_RUNTIME_DIR` before
+  `pam_sm_authenticate` ever runs — so by default you'll still see the
+  text prompt even here. To actually see the GUI box under `sudo`, add a
+  drop-in preserving those variables, e.g.:
+
+  ```
+  # /etc/sudoers.d/facial-auth-gui  (edit with visudo -f, never by hand)
+  Defaults env_keep += "DISPLAY WAYLAND_DISPLAY XAUTHORITY XDG_RUNTIME_DIR"
+  ```
+
+  `XDG_RUNTIME_DIR` matters on Wayland sessions specifically — without it,
+  the Wayland client library has no socket to connect to, regardless of
+  desktop environment. This has been confirmed working end-to-end on a
+  generic Wayland session and on COSMIC; the same mechanism (Qt's stock
+  xcb/wayland platform plugins, no per-DE code) applies equally under
+  GNOME, KDE Plasma, XFCE, Cinnamon, and MATE, X11 or Wayland, as long as
+  the Qt6 Wayland platform plugin is installed on Wayland sessions — see
+  the "Qt6 Wayland platform plugin" row in `docs/build-dependencies.md`.
+
+  This is a deliberate, manual opt-in step — `scripts/install.sh` never
+  writes sudoers config for you, matching its "never auto-touch privileged
+  config" policy for `/etc/pam.d` above.
+
+`scripts/test-harness.sh` / `pam_test_harness` always exercises the
+text-prompt path regardless of your desktop session: the harness clears
+`DISPLAY`/`WAYLAND_DISPLAY` from its own environment before authenticating
+(`tools/pam_test_harness/main.cpp`), since `pam_facial.so` is dlopen'd
+in-process and would otherwise see — and try to act on — whatever display
+variables are set in the terminal you ran the harness from.

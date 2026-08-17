@@ -112,6 +112,7 @@ add_subdirectory(src/pam)
 
 if(FACIAL_BUILD_GUI)
     add_subdirectory(src/gui)
+    add_subdirectory(src/confirm-gui)
 endif()
 
 if(BUILD_TESTING)

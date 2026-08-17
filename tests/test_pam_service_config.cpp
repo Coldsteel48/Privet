@@ -6,11 +6,11 @@ using namespace facial_auth;
 
 TEST(AllowListAcceptsKnownServicesOnly) {
     ASSERT_TRUE(isAllowedPamService("sudo"));
+    ASSERT_TRUE(isAllowedPamService("login"));
     ASSERT_TRUE(isAllowedPamService("gdm-password"));
     ASSERT_TRUE(isAllowedPamService("sddm"));
     ASSERT_TRUE(isAllowedPamService("lightdm"));
     ASSERT_TRUE(!isAllowedPamService("sshd"));
-    ASSERT_TRUE(!isAllowedPamService("login"));
     ASSERT_TRUE(!isAllowedPamService(""));
 }
 

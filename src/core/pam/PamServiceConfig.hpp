@@ -7,13 +7,15 @@ namespace facial_auth {
 
 // Fixed, non-extensible list of PAM services facial-auth-control /
 // facial-auth-enroll are ever allowed to modify. Deliberately excludes
-// sshd and anything not on this list: a mistake in a local greeter or
-// sudo is recoverable from the console; a mistake in sshd on a
-// remote/headless box may not be. See README's "never lock out" section
-// and docs/testing-safely.md — this list is the code-level enforcement
-// of that same policy, not just documentation.
-inline constexpr std::array<const char*, 4> kAllowedPamServices = {
+// sshd and anything not on this list: a mistake in a local service —
+// a greeter, sudo, or the plain console login prompt — is recoverable
+// from the console; a mistake in sshd on a remote/headless box may not
+// be. See README's "never lock out" section and docs/testing-safely.md
+// — this list is the code-level enforcement of that same policy, not
+// just documentation.
+inline constexpr std::array<const char*, 5> kAllowedPamServices = {
     "sudo",
+    "login",
     "gdm-password",
     "sddm",
     "lightdm",

@@ -66,26 +66,26 @@ else
         arch)
             pac_flags=(-S --needed)
             [[ "$ASSUME_YES" == "1" ]] && pac_flags+=(--noconfirm)
-            sudo pacman "${pac_flags[@]}" base-devel cmake pkgconf opencv v4l-utils pam qt6-base polkit
+            sudo pacman "${pac_flags[@]}" base-devel cmake pkgconf opencv v4l-utils pam qt6-base qt6-wayland polkit
             ;;
         debian)
             apt_flags=(install)
             [[ "$ASSUME_YES" == "1" ]] && apt_flags+=(-y)
             sudo apt-get update
             sudo apt-get "${apt_flags[@]}" build-essential cmake pkg-config libopencv-dev \
-                libv4l-dev libpam0g-dev qt6-base-dev policykit-1
+                libv4l-dev libpam0g-dev qt6-base-dev qt6-wayland policykit-1
             ;;
         fedora)
             dnf_flags=(install)
             [[ "$ASSUME_YES" == "1" ]] && dnf_flags+=(-y)
             sudo dnf "${dnf_flags[@]}" gcc-c++ cmake pkgconfig opencv-devel libv4l-devel \
-                pam-devel qt6-qtbase-devel polkit
+                pam-devel qt6-qtbase-devel qt6-qtwayland polkit
             ;;
         opensuse)
             zyp_flags=(install)
             [[ "$ASSUME_YES" == "1" ]] && zyp_flags+=(-y)
             sudo zypper "${zyp_flags[@]}" patterns-devel-C-C++-devel_C_C++ cmake pkgconf \
-                opencv-devel libv4l-devel pam-devel qt6-base-devel polkit
+                opencv-devel libv4l-devel pam-devel qt6-base-devel qt6-wayland polkit
             ;;
         *)
             echo "Could not identify your distro from /etc/os-release (ID='${ID:-}' ID_LIKE='${ID_LIKE:-}')." >&2
@@ -178,7 +178,9 @@ Before this can actually authenticate anyone, in order:
 
 2. Enroll your face:
      sudo facial-auth-enroll
-   or via the GUI: facial-auth-control (Enrollment tab).
+   or via the GUI: facial-auth-control (Enrollment tab) — also available
+   from your desktop's application menu as "Facial Auth Control"
+   (System/Settings/Utility, depending on your desktop environment).
 
 3. Validate against the THROWAWAY test service before touching any real
    one — read docs/testing-safely.md first, then:
@@ -191,11 +193,17 @@ Before this can actually authenticate anyone, in order:
        "sufficient" snippet (never "requisite"/"required", and never
        remove the existing password auth line under it); or
      - via facial-auth-control's "System Login" tab, which offers only a
-       fixed allow-list (sudo + local greeters), requires a typed
-       confirmation, and won't write anything unless 4 of 5 fresh
+       fixed allow-list (sudo + console login + local greeters), requires
+       a typed confirmation, and won't write anything unless 4 of 5 fresh
        recognition attempts match first.
    Never add it to sshd first — it's intentionally not offered in the GUI
    either. See docs/testing-safely.md.
+
+Tip: the "Authenticate using face recognition?" prompt shows as a real
+clickable Yes/No box (not just text) under sudo, IF you preserve DISPLAY/
+WAYLAND_DISPLAY in sudo's environment — most distros strip them by
+default. See docs/testing-safely.md, section 6, for the one-line sudoers
+drop-in to enable that.
 ============================================================================
 EOF
 

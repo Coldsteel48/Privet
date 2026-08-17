@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3f7fd8"/>
+      <stop offset="1" stop-color="#2857a6"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#bg)"/>
+
+  <!-- corner scan brackets, evoking face-detection framing -->
+  <g stroke="#ffffff" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.9">
+    <path d="M30 26 H24 a6 6 0 0 0 -6 6 v6"/>
+    <path d="M98 26 h6 a6 6 0 0 1 6 6 v6"/>
+    <path d="M30 102 H24 a6 6 0 0 1 -6 -6 v-6"/>
+    <path d="M98 102 h6 a6 6 0 0 0 6 -6 v-6"/>
+  </g>
+
+  <!-- simple face -->
+  <circle cx="64" cy="58" r="24" fill="#ffffff"/>
+  <circle cx="55" cy="54" r="4" fill="#2857a6"/>
+  <circle cx="73" cy="54" r="4" fill="#2857a6"/>
+  <path d="M52 68 q12 10 24 0" stroke="#2857a6" stroke-width="4" stroke-linecap="round" fill="none"/>
+
+  <!-- verified badge -->
+  <circle cx="92" cy="90" r="16" fill="#33b25e" stroke="#1f5f36" stroke-width="2"/>
+  <path d="M85 90 l5 5 10 -11" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

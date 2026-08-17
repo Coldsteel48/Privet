@@ -8,21 +8,37 @@
 
 #include <security/pam_appl.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 
 namespace {
 
 int conversationFunc(int numMsg, const struct pam_message** /*msg*/, struct pam_response** resp,
                       void* /*appdataPtr*/) {
-    // Facial auth has no interactive prompts; respond empty to anything
-    // that does appear rather than leaving the conversation hanging.
+    // pam_facial.so now asks a Yes/No "Authenticate using face
+    // recognition? (y/n)" prompt
+    // (PAM_PROMPT_ECHO_ON) before ever opening the camera, in a forked
+    // child so it can enforce its own 20s answer timeout — see
+    // confirmCameraUseViaPam() in src/pam/pam_facial.cpp. Auto-answer "y"
+    // to every prompt so the harness continues to exercise the full
+    // fork/exec/timeout/exit-code path non-interactively; set
+    // PAM_TEST_HARNESS_DECLINE=1 to instead simulate a user declining, or
+    // PAM_TEST_HARNESS_DELAY_MS to simulate a slow/unresponsive front end
+    // (set above 20000 to exercise the confirmation-timeout path itself —
+    // this call happens in a copy of this process forked off by
+    // pam_facial.so, so sleeping here doesn't block the harness itself).
+    if (const char* delayMs = std::getenv("PAM_TEST_HARNESS_DELAY_MS"); delayMs != nullptr) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::atoi(delayMs)));
+    }
+    const char* answer = std::getenv("PAM_TEST_HARNESS_DECLINE") != nullptr ? "n" : "y";
     auto* responses = static_cast<struct pam_response*>(calloc(static_cast<size_t>(numMsg),
                                                                  sizeof(struct pam_response)));
     for (int i = 0; i < numMsg; ++i) {
-        responses[i].resp = strdup("");
+        responses[i].resp = strdup(answer);
         responses[i].resp_retcode = 0;
     }
     *resp = responses;
@@ -39,6 +55,17 @@ int main(int argc, char** argv) {
                       "directly. See config/pam.d/facial-auth-test and docs/testing-safely.md.\n");
         return 2;
     }
+
+    // pam_facial.so now tries a GUI Yes/No helper before falling back to
+    // this harness's conversationFunc (see tryGuiConfirmation() in
+    // src/pam/pam_facial.cpp), whenever DISPLAY/WAYLAND_DISPLAY looks
+    // set — which it normally will be if this harness is run from an
+    // interactive desktop terminal, since pam_facial.so is dlopen'd
+    // in-process and reads this very process's environment. Clear both
+    // so the harness always exercises conversationFunc below and stays
+    // non-interactive regardless of where it's run from.
+    unsetenv("DISPLAY");
+    unsetenv("WAYLAND_DISPLAY");
 
     const std::string service = argv[1];
     const std::string user = argv[2];
