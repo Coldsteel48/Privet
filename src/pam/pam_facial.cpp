@@ -136,6 +136,33 @@ std::optional<bool> tryGuiConfirmation(const char* username) {
     }
 }
 
+// The plain-text PAM conversation "(y/n)" prompt — the original
+// confirmation mechanism, still used when confirmation_mode = text, and
+// as the Gui-mode fallback when no display is reachable (subject to
+// greeter_confirmation_mode). Must be called from inside the forked child
+// in confirmCameraUseViaPam(): conv() has no defined timeout, and this
+// module never blocks its host process on one directly (see that
+// function's comment).
+bool doTextConfirmation(const struct pam_conv* conv) {
+    struct pam_message msg;
+    msg.msg_style = PAM_PROMPT_ECHO_ON;
+    msg.msg = "Authenticate using face recognition? (y/n): ";
+    const struct pam_message* msgs[1] = {&msg};
+    struct pam_response* resp = nullptr;
+
+    const int rc = conv->conv(1, msgs, &resp, conv->appdata_ptr);
+    if (rc != PAM_SUCCESS || resp == nullptr) {
+        return false;
+    }
+    const bool affirmative = facial_auth::isAffirmativeResponse(resp[0].resp);
+    if (resp[0].resp != nullptr) {
+        std::memset(resp[0].resp, 0, std::strlen(resp[0].resp));  // don't leave the answer in memory
+        std::free(resp[0].resp);
+    }
+    std::free(resp);
+    return affirmative;
+}
+
 // Asks the user whether it's OK to open the camera for this
 // authentication attempt — first by trying a real Yes/No GUI box
 // (tryGuiConfirmation(), when a display is reachable), falling back to
@@ -158,6 +185,14 @@ std::optional<bool> tryGuiConfirmation(const char* username) {
 // be the thing that leaves a login prompt hanging, mirroring the
 // fork/timeout/kill pattern already used below for facial-auth-verify.
 bool confirmCameraUseViaPam(pam_handle_t* pamh, const char* username) {
+    // confirmation_mode = none means "never ask" full stop — resolved
+    // before ever touching PAM_CONV (unlike Text/Gui-fallback below) so a
+    // host process that happens not to provide a conversation structure
+    // still doesn't block this mode from working.
+    if (facial_auth::readConfirmationMode() == facial_auth::ConfirmationMode::None) {
+        return true;
+    }
+
     const struct pam_conv* conv = nullptr;
     if (pam_get_item(pamh, PAM_CONV, reinterpret_cast<const void**>(&conv)) != PAM_SUCCESS ||
         conv == nullptr || conv->conv == nullptr) {
@@ -195,25 +230,28 @@ bool confirmCameraUseViaPam(pam_handle_t* pamh, const char* username) {
         close(pipeFds[0]);
 
         char result = 0;
-        if (const std::optional<bool> guiAnswer = tryGuiConfirmation(username);
-            guiAnswer.has_value()) {
-            result = *guiAnswer ? 1 : 0;
-        } else {
-            struct pam_message msg;
-            msg.msg_style = PAM_PROMPT_ECHO_ON;
-            msg.msg = "Authenticate using face recognition? (y/n): ";
-            const struct pam_message* msgs[1] = {&msg};
-            struct pam_response* resp = nullptr;
-
-            const int rc = conv->conv(1, msgs, &resp, conv->appdata_ptr);
-            if (rc == PAM_SUCCESS && resp != nullptr) {
-                result = facial_auth::isAffirmativeResponse(resp[0].resp) ? 1 : 0;
-                if (resp[0].resp != nullptr) {
-                    std::memset(resp[0].resp, 0, std::strlen(resp[0].resp));  // don't leave the answer in memory
-                    std::free(resp[0].resp);
+        switch (facial_auth::readConfirmationMode()) {
+            case facial_auth::ConfirmationMode::None:
+                result = 1;
+                break;
+            case facial_auth::ConfirmationMode::Text:
+                result = doTextConfirmation(conv) ? 1 : 0;
+                break;
+            case facial_auth::ConfirmationMode::Gui:
+            default:
+                if (const std::optional<bool> guiAnswer = tryGuiConfirmation(username);
+                    guiAnswer.has_value()) {
+                    result = *guiAnswer ? 1 : 0;
+                } else if (facial_auth::readGreeterConfirmationMode() ==
+                           facial_auth::GreeterConfirmationMode::None) {
+                    // No display reachable (console login / graphical greeter,
+                    // e.g. COSMIC via greetd) and the admin has opted this
+                    // context out of any prompt at all.
+                    result = 1;
+                } else {
+                    result = doTextConfirmation(conv) ? 1 : 0;
                 }
-                std::free(resp);
-            }
+                break;
         }
         const ssize_t written = write(pipeFds[1], &result, 1);
         (void)written;  // best-effort: parent may already be gone on timeout

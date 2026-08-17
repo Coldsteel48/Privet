@@ -56,6 +56,12 @@ void applyConfigOverride(Config& config, const std::string& key, const std::stri
         config.illuminationGain = std::atof(value.c_str());
     } else if (key == "enroll_video_duration_sec") {
         config.enrollVideoDurationSec = std::atoi(value.c_str());
+    } else if (key == "confirmation_mode") {
+        config.confirmationMode = confirmationModeFromString(value);
+    } else if (key == "greeter_confirmation_mode") {
+        config.greeterConfirmationMode = greeterConfirmationModeFromString(value);
+    } else if (key == "confirmation_timeout_sec") {
+        config.confirmationTimeoutSec = confirmationTimeoutMsFromString(value) / 1000;
     }
     // Unknown keys are intentionally ignored for forward compatibility.
 }
@@ -105,7 +111,10 @@ std::string serialize(const Config& config) {
         << "distance_metric = " << config.distanceMetric << "\n"
         << "match_threshold = " << config.matchThreshold << "\n"
         << "illumination_gain = " << config.illuminationGain << "\n"
-        << "enroll_video_duration_sec = " << config.enrollVideoDurationSec << "\n";
+        << "enroll_video_duration_sec = " << config.enrollVideoDurationSec << "\n"
+        << "confirmation_timeout_sec = " << config.confirmationTimeoutSec << "\n"
+        << "confirmation_mode = " << toString(config.confirmationMode) << "\n"
+        << "greeter_confirmation_mode = " << toString(config.greeterConfirmationMode) << "\n";
     return out.str();
 }
 

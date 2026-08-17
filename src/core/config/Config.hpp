@@ -5,6 +5,7 @@
 
 #include "core/camera/CameraMode.hpp"
 #include "core/camera/PixelFormat.hpp"
+#include "core/pam/PamConfirmationPrompt.hpp"
 
 namespace facial_auth {
 
@@ -60,6 +61,28 @@ struct Config {
     // frames to populate the full 3x3 yaw/pitch grid (needs >=36 usable
     // frames; fewer degrades gracefully to a coarser split, see runEnroll).
     int enrollVideoDurationSec = 8;
+
+    // How pam_facial.so's "OK to use the camera?" confirmation behaves —
+    // see the ConfirmationMode/GreeterConfirmationMode enums in
+    // core/pam/PamConfirmationPrompt.hpp (this header includes it, and
+    // reuses its enums directly, purely so facial-auth-control's Settings
+    // page and pam_facial.so's own file parsing can never disagree on
+    // what these two keys mean). pam_facial.so reads the config file's
+    // raw text itself rather than going through Config — it deliberately
+    // never links Config/facial_core, see src/pam/pam_facial.cpp's header
+    // comment — so these fields exist here only for the GUI/serialize
+    // round trip, not because pam_facial.so consults this struct.
+    ConfirmationMode confirmationMode = ConfirmationMode::Gui;
+    GreeterConfirmationMode greeterConfirmationMode = GreeterConfirmationMode::Text;
+
+    // Seconds pam_facial.so waits for a confirmation answer (GUI click or
+    // typed y/n) before treating silence as a decline — same unit as the
+    // on-disk key. Clamped to [kMinConfirmationTimeoutMs/1000,
+    // kMaxConfirmationTimeoutMs/1000] via confirmationTimeoutMsFromString()
+    // in PamConfirmationPrompt.hpp, same as pam_facial.so's own reading of
+    // this key, so the GUI's spin box range and pam_facial.so's actual
+    // clamping can never drift apart.
+    int confirmationTimeoutSec = kDefaultConfirmationTimeoutMs / 1000;
 
     // Parses a `key = value` config file (# or ; starts a comment line,
     // blank lines ignored, unrecognized keys ignored for forward

@@ -68,6 +68,14 @@ TEST(TimeoutClampsToBounds) {
               kMaxConfirmationTimeoutMs);
 }
 
+TEST(ConfirmationTimeoutMsFromStringParsesAndClamps) {
+    ASSERT_EQ(confirmationTimeoutMsFromString("5"), 5000);
+    ASSERT_EQ(confirmationTimeoutMsFromString("abc"), kDefaultConfirmationTimeoutMs);
+    ASSERT_EQ(confirmationTimeoutMsFromString("0"), kDefaultConfirmationTimeoutMs);
+    ASSERT_EQ(confirmationTimeoutMsFromString("-5"), kDefaultConfirmationTimeoutMs);
+    ASSERT_EQ(confirmationTimeoutMsFromString("999999"), kMaxConfirmationTimeoutMs);
+}
+
 TEST(HasDisplayEnvTrueWhenEitherSet) {
     ASSERT_TRUE(hasDisplayEnv(":0", nullptr));
     ASSERT_TRUE(hasDisplayEnv(nullptr, "wayland-0"));
@@ -79,6 +87,43 @@ TEST(HasDisplayEnvFalseWhenAbsentOrEmpty) {
     ASSERT_TRUE(!hasDisplayEnv("", ""));
     ASSERT_TRUE(!hasDisplayEnv("", nullptr));
     ASSERT_TRUE(!hasDisplayEnv(nullptr, ""));
+}
+
+TEST(ConfirmationModeDefaultsToGuiWhenKeyAbsentOrGarbage) {
+    ASSERT_TRUE(parseConfirmationMode("") == ConfirmationMode::Gui);
+    ASSERT_TRUE(parseConfirmationMode("camera_mode = ir\n") == ConfirmationMode::Gui);
+    ASSERT_TRUE(parseConfirmationMode("confirmation_mode = bogus\n") == ConfirmationMode::Gui);
+    ASSERT_TRUE(parseConfirmationMode("# confirmation_mode = none\n") == ConfirmationMode::Gui);
+}
+
+TEST(ConfirmationModeParsesTextAndNone) {
+    ASSERT_TRUE(parseConfirmationMode("confirmation_mode = text\n") == ConfirmationMode::Text);
+    ASSERT_TRUE(parseConfirmationMode("confirmation_mode = TEXT\n") == ConfirmationMode::Text);
+    ASSERT_TRUE(parseConfirmationMode("confirmation_mode = none\n") == ConfirmationMode::None);
+    ASSERT_TRUE(parseConfirmationMode("confirmation_mode = NONE\n") == ConfirmationMode::None);
+    ASSERT_TRUE(parseConfirmationMode("confirmation_mode = gui\n") == ConfirmationMode::Gui);
+}
+
+TEST(ConfirmationModeRoundTripsThroughToString) {
+    ASSERT_TRUE(confirmationModeFromString(toString(ConfirmationMode::Gui)) == ConfirmationMode::Gui);
+    ASSERT_TRUE(confirmationModeFromString(toString(ConfirmationMode::Text)) == ConfirmationMode::Text);
+    ASSERT_TRUE(confirmationModeFromString(toString(ConfirmationMode::None)) == ConfirmationMode::None);
+}
+
+TEST(GreeterConfirmationModeDefaultsToTextWhenKeyAbsentOrGarbage) {
+    ASSERT_TRUE(parseGreeterConfirmationMode("") == GreeterConfirmationMode::Text);
+    ASSERT_TRUE(parseGreeterConfirmationMode("camera_mode = ir\n") == GreeterConfirmationMode::Text);
+    ASSERT_TRUE(parseGreeterConfirmationMode("greeter_confirmation_mode = bogus\n") ==
+                GreeterConfirmationMode::Text);
+}
+
+TEST(GreeterConfirmationModeParsesNone) {
+    ASSERT_TRUE(parseGreeterConfirmationMode("greeter_confirmation_mode = none\n") ==
+                GreeterConfirmationMode::None);
+    ASSERT_TRUE(parseGreeterConfirmationMode("greeter_confirmation_mode = NONE\n") ==
+                GreeterConfirmationMode::None);
+    ASSERT_TRUE(parseGreeterConfirmationMode("greeter_confirmation_mode = text\n") ==
+                GreeterConfirmationMode::Text);
 }
 
 MINITEST_MAIN()

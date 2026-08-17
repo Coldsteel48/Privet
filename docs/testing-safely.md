@@ -142,10 +142,11 @@ In practice that means:
 - **Console `login`, and graphical greeters (`gdm-password`/`sddm`/
   `lightdm`, including COSMIC via greetd)**: no display is reachable at
   PAM-conversation time for an arbitrary child process to draw into, so
-  these always use the text prompt. This is expected, not a bug — see
-  the plan discussion in `src/pam/pam_facial.cpp`'s comments for why
-  patching a specific greeter to render this differently isn't pursued
-  here.
+  the box can never appear here. This is a structural limitation, not a
+  bug — patching a specific greeter's own rendering to draw the box
+  itself isn't pursued here (see the plan discussion in
+  `src/pam/pam_facial.cpp`'s comments). What *is* configurable is what
+  happens instead — see "Choosing the confirmation behavior" below.
 - **`sudo`, run from an already-logged-in graphical session**: this is
   the one place the GUI box can realistically appear, but most distros'
   default sudoers config (`Defaults env_reset`) strips `DISPLAY`/
@@ -178,3 +179,45 @@ text-prompt path regardless of your desktop session: the harness clears
 (`tools/pam_test_harness/main.cpp`), since `pam_facial.so` is dlopen'd
 in-process and would otherwise see — and try to act on — whatever display
 variables are set in the terminal you ran the harness from.
+
+### Choosing the confirmation behavior
+
+facial-auth-control's Settings page exposes three controls (persisted as
+`confirmation_mode` / `greeter_confirmation_mode` /
+`confirmation_timeout_sec` in `/etc/facial-auth/config.conf` — see
+`config/facial-auth.conf.example` and
+`ConfirmationMode`/`GreeterConfirmationMode` in
+`src/core/pam/PamConfirmationPrompt.hpp`):
+
+- **Confirmation prompt** — the primary mode:
+  - *Clickable Yes/No box (mouse, recommended)* — today's default
+    behavior: try the GUI box, and where it can't appear, fall back per
+    the second control below.
+  - *Plain text Y/N prompt* — always use the PAM conversation's
+    `(y/n)` prompt, everywhere, never attempting the GUI box even where
+    it could appear (e.g. `sudo` with the env-preserving drop-in above).
+  - *No confirmation — authenticate immediately* — skip asking
+    altogether, everywhere; face recognition just runs. This bypasses
+    `PAM_CONV` entirely, so it also works on a host process that
+    provides no conversation at all.
+- **At the login screen, when no box is possible** — only consulted when
+  the primary mode above is *Clickable Yes/No box* and no display was
+  reachable for it (console `login`, or a graphical greeter's login
+  screen — including COSMIC via greetd): either fall back to the text
+  prompt (default, unchanged), or skip confirmation and authenticate
+  immediately in that context specifically, without changing how `sudo`
+  or any other display-capable context behaves.
+- **Confirmation timeout** — how long (1-300s, default 20s) pam_facial.so
+  waits for an answer before treating silence as a decline. Not
+  consulted when the primary mode is *No confirmation*. This field used
+  to only be settable by hand-editing the config file, and — being
+  absent from `Config` — was silently dropped the next time anything else
+  was saved through the GUI; it's now a proper `Config` field (see
+  `confirmationTimeoutSec` in `src/core/config/Config.hpp`) so it
+  round-trips correctly.
+
+This is what actually answers "can the login screen be mouse-only?" —
+it can't show a mouse-driven box (no display is reachable there, see
+above), but it can skip the prompt altogether by setting the second
+control to *authenticate immediately*, which removes the keyboard `y` +
+Enter step at the login screen entirely.
