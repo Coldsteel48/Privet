@@ -21,7 +21,17 @@ struct Config {
     int frameWidth = 640;
     int frameHeight = 480;
     int captureTimeoutMs = 2000;
-    int maxCaptureAttempts = 3;
+    // On the confirmed IR hardware the illuminator strobes on alternating
+    // frames, so per-attempt detection succeeds roughly 25% of the time
+    // even under good conditions (empirically, runEnroll needs ~32
+    // attempts for 8 successful detections). 20 attempts gives
+    // 0.75^20 ≈ 0.3% chance of total failure, vs 0.75^3 = 42% at the old
+    // default. Each captureFrame() returns near-instantly under normal
+    // streaming (bounded by the ~33ms frame period, not
+    // captureTimeoutMs), so 20 attempts costs well under a second in the
+    // normal case; the outer 8s PAM timeout (pam_facial.cpp's
+    // kOuterTimeoutMs) independently bounds a genuinely stalled camera.
+    int maxCaptureAttempts = 20;
 
     std::string detectorModelPath = "/etc/facial-auth/models/face_detection_yunet.onnx";
     std::string embedderModelPath = "/etc/facial-auth/models/face_recognition_sface.onnx";

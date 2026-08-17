@@ -39,14 +39,21 @@ require_ir = true
 
 # Must match your IR node's actual (and often only) supported resolution
 # exactly — see the Logi 4K Stream Edition example above (340x340).
-frame_width = 640
-frame_height = 480
+frame_width = 340
+frame_height = 340
 capture_timeout_ms = 2000
-# On a strobing IR camera (see the note above), attempts must be >= 2 so
-# a dark/ambient frame can't dominate the whole budget — with strict
-# alternation, 3 guarantees at least one illuminated frame regardless of
-# which phase capture happens to start on.
-max_capture_attempts = 3
+# On a strobing IR camera (see the note above), roughly half of all
+# frames are dark/undetectable before face detection even runs, and
+# empirically only ~25% of attempts yield a successful detection even
+# during good conditions (facial-auth-enroll needs ~32 attempts for 8
+# successful samples). 20 attempts gives a 0.75^20 ≈ 0.3% chance of total
+# failure, vs 0.75^3 = 42% at a budget of 3 — the latter is why "Test
+# Recognition" could fail almost every time even with a correctly-tuned
+# illumination_gain. Each capture attempt returns near-instantly under
+# normal streaming, so this costs well under a second in the normal
+# case; a stalled camera is independently bounded by the outer PAM
+# timeout (pam_facial.cpp's kOuterTimeoutMs).
+max_capture_attempts = 20
 
 detector_model_path = /etc/facial-auth/models/face_detection_yunet.onnx
 embedder_model_path = /etc/facial-auth/models/face_recognition_sface.onnx

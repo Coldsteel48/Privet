@@ -51,25 +51,43 @@ VerifyOutcome runVerification(const std::string& username) {
     for (int attempt = 0; attempt < config.maxCaptureAttempts; ++attempt) {
         const auto frameOpt = camera.captureFrame();
         if (!frameOpt) {
+            Logger::log(LogLevel::Debug, "runVerification: attempt " + std::to_string(attempt) +
+                                              ": capture timeout/transient I/O error, retrying");
             continue;  // per-attempt timeout/transient I/O error — retry within budget
         }
 
         const auto faces = detector.detect(*frameOpt);
-        if (faces.size() != 1) {
-            // 0 faces: nobody in frame yet, keep trying. >1 faces:
-            // ambiguous — Phase 1 policy is to reject rather than guess.
+        if (faces.empty()) {
+            Logger::log(LogLevel::Debug,
+                        "runVerification: attempt " + std::to_string(attempt) + ": 0 faces detected");
+            continue;
+        }
+        if (faces.size() > 1) {
+            Logger::log(LogLevel::Warning, "runVerification: attempt " + std::to_string(attempt) +
+                                                ": " + std::to_string(faces.size()) +
+                                                " faces detected, ambiguous — rejecting");
             continue;
         }
 
         const cv::Mat aligned = embedder.alignAndCrop(*frameOpt, faces.front());
         const cv::Mat probe = embedder.extractEmbedding(aligned);
+        sawARealFace = true;  // a face was genuinely seen and compared, just didn't match (yet)
 
-        if (matcher.isMatch(probe, enrolledMat)) {
+        const double dist = matcher.distance(probe, enrolledMat);
+        if (dist <= config.matchThreshold) {
+            Logger::log(LogLevel::Info, "runVerification: attempt " + std::to_string(attempt) +
+                                             ": match, distance=" + std::to_string(dist) +
+                                             " threshold=" + std::to_string(config.matchThreshold));
             return VerifyOutcome::Match;
         }
-        sawARealFace = true;  // a face was genuinely seen and compared, just didn't match
+        Logger::log(LogLevel::Info, "runVerification: attempt " + std::to_string(attempt) +
+                                         ": no match, distance=" + std::to_string(dist) +
+                                         " threshold=" + std::to_string(config.matchThreshold));
     }
 
+    Logger::log(LogLevel::Info, "runVerification: exhausted " +
+                                     std::to_string(config.maxCaptureAttempts) +
+                                     " attempts, sawARealFace=" + (sawARealFace ? "true" : "false"));
     return sawARealFace ? VerifyOutcome::NoMatch : VerifyOutcome::Unavailable;
 }
 
