@@ -7,6 +7,7 @@
 #include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
 #include <QSlider>
@@ -230,6 +231,20 @@ void EnrollmentPage::onReEnrollClicked() {
 void EnrollmentPage::startEnroll(bool reEnroll) {
     if (runner_->isBusy()) return;
 
+    // Static instructions, shown once up front: the recording window has a
+    // fixed, known duration (Config::enrollVideoDurationSec), so there's no
+    // need for a live progress protocol from the privileged helper — the
+    // user just needs to know what's coming before the polkit prompt (and
+    // the helper's blocking call) take over the UI.
+    QMessageBox::information(
+        this, tr("Enrollment recording"),
+        tr("After you confirm, recording starts for a few seconds. Follow the on-screen-less "
+           "prompts by feel: start looking straight at the camera, then slowly turn your head "
+           "left, then right, then tilt up, then down, and return to center. Moving through the "
+           "full sequence builds several templates for different angles and improves "
+           "recognition \xe2\x80\x94 but staying still and enrolling from straight-on still works "
+           "fine too."));
+
     // Release the preview camera handle before the privileged helper
     // opens the same device — most UVC drivers reject a second
     // concurrent streaming open.
@@ -243,7 +258,8 @@ void EnrollmentPage::startEnroll(bool reEnroll) {
     const QString cameraMode = rgbMode ? QStringLiteral("rgb") : QStringLiteral("ir");
 
     pendingAction_ = reEnroll ? PendingAction::ReEnroll : PendingAction::Enroll;
-    statusLabel_->setText(tr("Look at the camera\xe2\x80\xa6 (a polkit authentication prompt may appear)"));
+    statusLabel_->setText(tr("Recording\xe2\x80\xa6 follow the head-turn prompt, this takes a few "
+                              "seconds (a polkit authentication prompt may appear first)"));
     // The illumination value currently on the slider is persisted as part
     // of this same privileged call — see EnrollHelperRunner::enroll() and
     // facial-auth-enroll's --illumination-gain — so whatever worked well
@@ -274,8 +290,11 @@ void EnrollmentPage::onHelperFinished(EnrollHelperRunner::Result result) {
         case PendingAction::Enroll:
         case PendingAction::ReEnroll:
             if (result.ok) {
-                statusLabel_->setText(tr("Enrolled successfully (%1 samples, %2 mode, %3).")
+                statusLabel_->setText(tr("Enrolled successfully (%1 samples across %2 angle "
+                                          "template%3, %4 mode, %5).")
                                            .arg(result.samples)
+                                           .arg(result.angleBuckets)
+                                           .arg(result.angleBuckets == 1 ? QString() : QStringLiteral("s"))
                                            .arg(result.cameraMode)
                                            .arg(result.enrolledAt));
                 reEnrollButton_->setVisible(true);

@@ -74,7 +74,7 @@ void EnrollHelperRunner::disablePam(const QString& service) {
 EnrollHelperRunner::Result EnrollHelperRunner::parseOutput(const QString& stdoutText,
                                                             int exitCode) const {
     // facial-auth-enroll prints exactly one machine-parseable line, e.g.:
-    //   STATUS=ok ENROLLED=true SAMPLES=8 CAMERA_MODE=ir ENROLLED_AT="2026-08-16T12:00:00Z"
+    //   STATUS=ok ENROLLED=true SAMPLES=8 ANGLE_BUCKETS=3 CAMERA_MODE=ir ENROLLED_AT="2026-08-16T12:00:00Z"
     //   STATUS=ok ENROLLED=false
     //   STATUS=ok MATCH=true   (--test; MATCH is "true" | "false" | "unavailable")
     //   STATUS=error MESSAGE="camera busy"
@@ -102,6 +102,8 @@ EnrollHelperRunner::Result EnrollHelperRunner::parseOutput(const QString& stdout
     result.matchOutcome = extract("MATCH");
     const QString samples = extract("SAMPLES");
     if (!samples.isEmpty()) result.samples = samples.toInt();
+    const QString angleBuckets = extract("ANGLE_BUCKETS");
+    if (!angleBuckets.isEmpty()) result.angleBuckets = angleBuckets.toInt();
     const QString testPasses = extract("TEST_PASSES");
     if (!testPasses.isEmpty()) result.testPasses = testPasses.toInt();
 

@@ -1,9 +1,13 @@
 #include "VerifyRunner.hpp"
 
+#include <utility>
+#include <vector>
+
 #include <opencv2/core.hpp>
 
 #include "core/camera/V4L2Camera.hpp"
 #include "core/config/Config.hpp"
+#include "core/face/AngleBucket.hpp"
 #include "core/face/FaceDetector.hpp"
 #include "core/face/FaceEmbedder.hpp"
 #include "core/log/Logger.hpp"
@@ -21,13 +25,21 @@ VerifyOutcome runVerification(const std::string& username) {
     const Config& config = *configOpt;
 
     EmbeddingStore store;
-    const auto enrolledOpt = store.load(username);
-    if (!enrolledOpt) {
+    const auto enrolledOpt = store.loadAll(username);
+    if (!enrolledOpt || enrolledOpt->empty()) {
         Logger::log(LogLevel::Warning,
                     "runVerification: no enrollment on file for user '" + username + "'");
         return VerifyOutcome::Unavailable;
     }
-    const cv::Mat enrolledMat = toMat(*enrolledOpt);
+    // One template per angle bucket (see AngleBucket.hpp) — a v1-format
+    // (pre-multi-angle) enrollment loads as a single Center-tagged record,
+    // so this scan degrades to today's single-template comparison
+    // transparently.
+    std::vector<std::pair<AngleBucket, cv::Mat>> enrolledTemplates;
+    enrolledTemplates.reserve(enrolledOpt->size());
+    for (const EmbeddingRecord& record : *enrolledOpt) {
+        enrolledTemplates.emplace_back(record.angleBucket, toMat(record));
+    }
 
     CameraConfig cameraConfig;
     cameraConfig.devicePath = config.devicePath;
@@ -73,15 +85,32 @@ VerifyOutcome runVerification(const std::string& username) {
         const cv::Mat probe = embedder.extractEmbedding(aligned);
         sawARealFace = true;  // a face was genuinely seen and compared, just didn't match (yet)
 
-        const double dist = matcher.distance(probe, enrolledMat);
-        if (dist <= config.matchThreshold) {
+        // Scan every angle-bucket template, keep the best (minimum
+        // distance) match — this is what makes multi-angle enrollment pay
+        // off: whichever pose the live probe most resembles wins, instead
+        // of only ever comparing against a single averaged-Center template.
+        double bestDistance = 0.0;
+        AngleBucket bestBucket = AngleBucket::Center;
+        bool haveBest = false;
+        for (const auto& [bucket, enrolledMat] : enrolledTemplates) {
+            const double dist = matcher.distance(probe, enrolledMat);
+            if (!haveBest || dist < bestDistance) {
+                bestDistance = dist;
+                bestBucket = bucket;
+                haveBest = true;
+            }
+        }
+
+        if (bestDistance <= config.matchThreshold) {
             Logger::log(LogLevel::Info, "runVerification: attempt " + std::to_string(attempt) +
-                                             ": match, distance=" + std::to_string(dist) +
+                                             ": match, bucket=" + toString(bestBucket) +
+                                             " distance=" + std::to_string(bestDistance) +
                                              " threshold=" + std::to_string(config.matchThreshold));
             return VerifyOutcome::Match;
         }
         Logger::log(LogLevel::Info, "runVerification: attempt " + std::to_string(attempt) +
-                                         ": no match, distance=" + std::to_string(dist) +
+                                         ": no match, best bucket=" + toString(bestBucket) +
+                                         " distance=" + std::to_string(bestDistance) +
                                          " threshold=" + std::to_string(config.matchThreshold));
     }
 

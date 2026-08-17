@@ -12,6 +12,10 @@ struct EnrollmentMetadata {
     CameraMode cameraMode = CameraMode::IR;
     int sampleCount = 0;
     std::string enrolledAtIso8601;
+    // Number of angle-bucket templates stored (see AngleBucket.hpp).
+    // Defaults to 1 for meta.json files written before this field existed
+    // — a v1-format enrollment is exactly one Center-tagged template.
+    int angleBucketCount = 1;
 };
 
 // Reads/writes /var/lib/facial-auth/<username>/{embedding.bin,meta.json}.
@@ -27,12 +31,14 @@ public:
     // malicious or malformed username can never escape baseDir.
     bool isValidUsername(const std::string& username) const;
 
-    bool save(const std::string& username, const EmbeddingRecord& record,
-              const EnrollmentMetadata& metadata);
+    // `records` must be non-empty (see EmbeddingFormat::serializeEmbeddings).
+    bool saveAll(const std::string& username, const std::vector<EmbeddingRecord>& records,
+                 const EnrollmentMetadata& metadata);
 
     // std::nullopt covers: invalid username, no enrollment on file, or a
-    // corrupt/wrong-version embedding.bin.
-    std::optional<EmbeddingRecord> load(const std::string& username) const;
+    // corrupt/wrong-version embedding.bin. A v1-format file loads as a
+    // single Center-tagged record — see EmbeddingFormat::deserializeEmbeddings.
+    std::optional<std::vector<EmbeddingRecord>> loadAll(const std::string& username) const;
     std::optional<EnrollmentMetadata> loadMetadata(const std::string& username) const;
 
     bool remove(const std::string& username);

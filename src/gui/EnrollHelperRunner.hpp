@@ -23,6 +23,7 @@ public:
         bool ok = false;       // did the helper invocation itself succeed
         QString message;       // human-readable error, if !ok
         int samples = 0;       // enroll: number of samples captured
+        int angleBuckets = 0;  // enroll: number of angle-bucket templates stored (see ANGLE_BUCKETS=)
         QString cameraMode;    // enroll/status: "ir" | "rgb"
         bool enrolled = false; // enroll/status: whether the user has an enrollment on file
         QString enrolledAt;    // enroll/status: ISO-8601 timestamp

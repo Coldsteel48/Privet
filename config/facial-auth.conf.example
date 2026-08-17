@@ -71,3 +71,14 @@ match_threshold = 0.36
 # "Save Illumination" there — that's the only sanctioned way to set this,
 # so real enroll/verify captures use the same value you tuned by eye.
 illumination_gain = 1.0
+
+# How long (seconds) facial-auth-enroll records raw frames while you turn
+# your head during Enroll/Re-enroll, before post-processing the buffer
+# into several angle-tagged templates (left/right/up/down/center) that
+# verify then matches against all of. Longer gives more usable frames to
+# populate the full 3x3 angle grid; too few usable frames (e.g. barely
+# moving your head, or a very short duration) just falls back to fewer
+# buckets — see runEnroll's bucketing logic. Not needed if you don't plan
+# to re-enroll after upgrading; existing enrollments keep working as a
+# single template until re-enrolled.
+enroll_video_duration_sec = 8

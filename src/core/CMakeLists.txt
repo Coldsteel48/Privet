@@ -2,6 +2,7 @@ add_library(facial_core STATIC
     camera/PixelFormat.cpp
     camera/CameraMode.cpp
     camera/V4L2Camera.cpp
+    face/AngleBucket.cpp
     face/FaceDetector.cpp
     face/FaceEmbedder.cpp
     match/EmbeddingMatcher.cpp

@@ -51,6 +51,16 @@ struct Config {
     // and verify alike) see the same boost the user tuned by eye.
     double illuminationGain = 1.0;
 
+    // Duration (wall-clock seconds) of the raw-frame recording window
+    // facial-auth-enroll buffers before post-processing it into
+    // angle-bucketed templates (see AngleBucket.hpp): record everything
+    // first while the user turns their head, then run detection/embedding
+    // over the whole buffer at once, rather than trying to steer capture
+    // live. 8s gives enough usable (illuminated + successfully-detected)
+    // frames to populate the full 3x3 yaw/pitch grid (needs >=36 usable
+    // frames; fewer degrades gracefully to a coarser split, see runEnroll).
+    int enrollVideoDurationSec = 8;
+
     // Parses a `key = value` config file (# or ; starts a comment line,
     // blank lines ignored, unrecognized keys ignored for forward
     // compatibility). Returns std::nullopt only if the file cannot be

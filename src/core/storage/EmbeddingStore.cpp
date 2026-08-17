@@ -99,9 +99,10 @@ std::string EmbeddingStore::userDir(const std::string& username) const {
     return baseDir_ + "/" + username;
 }
 
-bool EmbeddingStore::save(const std::string& username, const EmbeddingRecord& record,
-                           const EnrollmentMetadata& metadata) {
+bool EmbeddingStore::saveAll(const std::string& username, const std::vector<EmbeddingRecord>& records,
+                              const EnrollmentMetadata& metadata) {
     if (!isValidUsername(username)) return false;
+    if (records.empty()) return false;
 
     ::mkdir(baseDir_.c_str(), 0700);  // best-effort; may already exist
 
@@ -110,7 +111,7 @@ bool EmbeddingStore::save(const std::string& username, const EmbeddingRecord& re
         return false;
     }
 
-    if (!writeFileWithMode(dir + "/embedding.bin", serializeEmbedding(record), 0600)) {
+    if (!writeFileWithMode(dir + "/embedding.bin", serializeEmbeddings(records), 0600)) {
         return false;
     }
 
@@ -119,17 +120,18 @@ bool EmbeddingStore::save(const std::string& username, const EmbeddingRecord& re
          << "  \"model_id\": \"" << jsonEscape(metadata.modelId) << "\",\n"
          << "  \"camera_mode\": \"" << toString(metadata.cameraMode) << "\",\n"
          << "  \"sample_count\": " << metadata.sampleCount << ",\n"
+         << "  \"angle_bucket_count\": " << metadata.angleBucketCount << ",\n"
          << "  \"enrolled_at\": \"" << jsonEscape(metadata.enrolledAtIso8601) << "\"\n"
          << "}\n";
     return writeFileWithMode(dir + "/meta.json", json.str(), 0600);
 }
 
-std::optional<EmbeddingRecord> EmbeddingStore::load(const std::string& username) const {
+std::optional<std::vector<EmbeddingRecord>> EmbeddingStore::loadAll(const std::string& username) const {
     if (!isValidUsername(username)) return std::nullopt;
     const auto bytes = readFile(userDir(username) + "/embedding.bin");
     if (!bytes) return std::nullopt;
     try {
-        return deserializeEmbedding(*bytes);
+        return deserializeEmbeddings(*bytes);
     } catch (const std::exception&) {
         return std::nullopt;
     }
@@ -148,6 +150,7 @@ std::optional<EnrollmentMetadata> EmbeddingStore::loadMetadata(const std::string
     metadata.modelId = extractJsonString(json, "model_id").value_or("");
     metadata.cameraMode = cameraModeFromString(extractJsonString(json, "camera_mode").value_or("ir"));
     metadata.sampleCount = extractJsonInt(json, "sample_count").value_or(0);
+    metadata.angleBucketCount = extractJsonInt(json, "angle_bucket_count").value_or(1);
     metadata.enrolledAtIso8601 = extractJsonString(json, "enrolled_at").value_or("");
     return metadata;
 }

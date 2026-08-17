@@ -4,11 +4,16 @@
 // (the GUI) — see the project plan's "Privilege architecture" section.
 // Never invoked by pam_facial.so (that only execs facial-auth-verify).
 
+#include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <numeric>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -23,6 +28,7 @@
 
 #include "core/camera/V4L2Camera.hpp"
 #include "core/config/Config.hpp"
+#include "core/face/AngleBucket.hpp"
 #include "core/face/FaceDetector.hpp"
 #include "core/face/FaceEmbedder.hpp"
 #include "core/pam/PamServiceConfig.hpp"
@@ -33,8 +39,18 @@ namespace {
 
 using namespace facial_auth;
 
-constexpr int kSampleFramesToCapture = 8;
 constexpr float kMinDetectionScore = 0.85f;
+
+// Below this many usable (detected + landmark-valid) frames, bucketing
+// degrades to a single Center template — identical to pre-multi-angle
+// behavior. Below kMinFramesForFullGridBucketing but at/above this,
+// only the yaw (left/right) axis is bucketed, pitch is ignored. Both
+// thresholds assume ~4 frames/bucket as a sane per-template minimum (3
+// yaw buckets, 9 full-grid buckets) — self-calibrating to whatever
+// range of head motion the user actually produced, not a hardcoded
+// angle threshold. See runEnroll's post-process/bucket phases.
+constexpr int kMinFramesForYawBucketing = 12;
+constexpr int kMinFramesForFullGridBucketing = 36;
 
 // Before ever touching a live PAM config, require most of several fresh
 // recognition attempts to actually match — not just one. Guards against
@@ -405,7 +421,7 @@ int runEnroll(const std::string& username, const Args& args) {
         std::cout << "STATUS=error MESSAGE=\"invalid username\"\n";
         return 1;
     }
-    if (store.load(username) && !args.reEnroll) {
+    if (store.loadMetadata(username) && !args.reEnroll) {
         std::cout << "STATUS=error MESSAGE=\"user already enrolled, pass --re-enroll to overwrite\"\n";
         return 1;
     }
@@ -456,56 +472,178 @@ int runEnroll(const std::string& username, const Args& args) {
     FaceDetector detector(config.detectorModelPath);
     FaceEmbedder embedder(config.embedderModelPath);
 
-    std::cout << "Look at the camera and hold still...\n";
-    std::vector<cv::Mat> embeddings;
-    int attempts = 0;
-    const int maxAttempts = kSampleFramesToCapture * 4;  // generous budget for missed/rejected frames
-    while (static_cast<int>(embeddings.size()) < kSampleFramesToCapture && attempts < maxAttempts) {
-        ++attempts;
-        const auto frameOpt = camera.captureFrame();
-        if (!frameOpt) continue;
+    // Phase 1 — Record: buffer raw frames for a fixed wall-clock window
+    // while the user turns/tilts their head, rather than trying to steer
+    // capture live. No cv::VideoWriter/file involved — frames just live in
+    // memory for the (short-lived, root) duration of this process; see the
+    // project plan for why (keeps the deliberately-trimmed OpenCV link
+    // list, avoids an unverified FFmpeg backend dependency).
+    std::cout << "Recording for " << config.enrollVideoDurationSec
+              << "s — follow the prompts, keeping your face in frame:\n";
+    struct Checkpoint {
+        double atFraction;
+        const char* message;
+    };
+    const std::vector<Checkpoint> checkpoints = {
+        {0.0, "  Look straight at the camera..."},
+        {0.20, "  Slowly turn your head to the left..."},
+        {0.40, "  ...now to the right..."},
+        {0.60, "  ...now tilt your head up..."},
+        {0.75, "  ...now tilt your head down..."},
+        {0.90, "  ...and return to center."},
+    };
+    std::vector<cv::Mat> rawFrames;
+    std::size_t nextCheckpoint = 0;
+    const auto recordStart = std::chrono::steady_clock::now();
+    while (true) {
+        const double elapsedSec =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - recordStart).count();
+        if (elapsedSec >= config.enrollVideoDurationSec) break;
+        while (nextCheckpoint < checkpoints.size() &&
+               elapsedSec >= checkpoints[nextCheckpoint].atFraction * config.enrollVideoDurationSec) {
+            std::cout << checkpoints[nextCheckpoint].message << "\n";
+            ++nextCheckpoint;
+        }
+        if (const auto frameOpt = camera.captureFrame()) {
+            rawFrames.push_back(*frameOpt);
+        }
+    }
 
-        const auto faces = detector.detect(*frameOpt);
+    if (rawFrames.empty()) {
+        std::cout << "STATUS=error MESSAGE=\"no frames captured\"\n";
+        return 1;
+    }
+
+    // Phase 2 — Post-process: run detection/embedding over the whole
+    // buffer now that recording is done. Also computes a yaw/pitch ratio
+    // per usable frame from the detector's 5-point landmarks (right eye,
+    // left eye, nose tip, right mouth corner, left mouth corner), used for
+    // bucketing in phase 3. Which physical direction these ratios
+    // correspond to isn't verified against real hardware and doesn't need
+    // to be — see AngleBucket.hpp.
+    struct FrameSample {
+        cv::Mat embedding;
+        float yawRatio = 0.0f;
+        float pitchRatio = 0.0f;
+    };
+    std::vector<FrameSample> usable;
+    for (const cv::Mat& frame : rawFrames) {
+        const auto faces = detector.detect(frame);
         if (faces.size() != 1 || faces.front().score < kMinDetectionScore) {
             continue;  // 0/>1 faces, or low-confidence detection — skip this frame
         }
+        const DetectedFace& face = faces.front();
+        const cv::Point2f& rightEye = face.landmarks[0];
+        const cv::Point2f& leftEye = face.landmarks[1];
+        const cv::Point2f& nose = face.landmarks[2];
+        const cv::Point2f& rightMouth = face.landmarks[3];
+        const cv::Point2f& leftMouth = face.landmarks[4];
 
-        const cv::Mat aligned = embedder.alignAndCrop(*frameOpt, faces.front());
-        embeddings.push_back(embedder.extractEmbedding(aligned));
-        std::cout << "  captured sample " << embeddings.size() << "/" << kSampleFramesToCapture << "\n";
+        const float interocular = std::fabs(leftEye.x - rightEye.x);
+        const float eyeMidX = (rightEye.x + leftEye.x) / 2.0f;
+        const float eyeMidY = (rightEye.y + leftEye.y) / 2.0f;
+        const float mouthMidY = (rightMouth.y + leftMouth.y) / 2.0f;
+        const float pitchSpan = mouthMidY - eyeMidY;
+        if (interocular < 1.0f || std::fabs(pitchSpan) < 1.0f) {
+            continue;  // degenerate landmarks (near-zero denominator) — skip rather than divide
+        }
+
+        FrameSample sample;
+        const cv::Mat aligned = embedder.alignAndCrop(frame, face);
+        sample.embedding = embedder.extractEmbedding(aligned);
+        sample.yawRatio = (nose.x - eyeMidX) / interocular;
+        sample.pitchRatio = (nose.y - eyeMidY) / pitchSpan;
+        usable.push_back(std::move(sample));
+        std::cout << "  processed sample " << usable.size() << " (of " << rawFrames.size()
+                  << " frames captured)\n";
     }
 
-    if (embeddings.empty()) {
+    if (usable.empty()) {
         std::cout << "STATUS=error MESSAGE=\"no usable face samples captured\"\n";
         return 1;
     }
 
-    // Average the (already L2-normalized, per SFace's own output
-    // convention) embeddings, then re-normalize — reduces sensitivity to
-    // any single bad frame/pose/lighting condition.
-    cv::Mat sum = cv::Mat::zeros(embeddings.front().size(), CV_32F);
-    for (const auto& e : embeddings) sum += e;
-    sum /= static_cast<float>(embeddings.size());
-    const double norm = cv::norm(sum, cv::NORM_L2);
-    if (norm > 0.0) sum /= static_cast<float>(norm);
+    // Phase 3 — Bucket: split usable frames by yaw/pitch tercile into a
+    // self-calibrating grid (no hardcoded angle threshold — it adapts to
+    // whatever range of motion the user actually produced), gracefully
+    // degrading to fewer buckets when there isn't enough data to support
+    // finer ones. A user who doesn't move their head still enrolls
+    // successfully with a single Center template, exactly as before this
+    // feature existed.
+    std::map<AngleBucket, std::vector<cv::Mat>> bucketed;
+    if (static_cast<int>(usable.size()) < kMinFramesForYawBucketing) {
+        for (const auto& sample : usable) bucketed[AngleBucket::Center].push_back(sample.embedding);
+    } else {
+        std::vector<std::size_t> byYaw(usable.size());
+        std::iota(byYaw.begin(), byYaw.end(), 0);
+        std::sort(byYaw.begin(), byYaw.end(), [&](std::size_t a, std::size_t b) {
+            return usable[a].yawRatio < usable[b].yawRatio;
+        });
+        std::vector<int> yawThird(usable.size());
+        for (std::size_t rank = 0; rank < byYaw.size(); ++rank) {
+            yawThird[byYaw[rank]] = static_cast<int>(rank * 3 / byYaw.size());  // 0, 1, or 2
+        }
 
+        if (static_cast<int>(usable.size()) < kMinFramesForFullGridBucketing) {
+            // Not enough data for the full grid — yaw only, pitch ignored.
+            static constexpr AngleBucket kYawOnly[3] = {AngleBucket::Left, AngleBucket::Center,
+                                                          AngleBucket::Right};
+            for (std::size_t i = 0; i < usable.size(); ++i) {
+                bucketed[kYawOnly[yawThird[i]]].push_back(usable[i].embedding);
+            }
+        } else {
+            std::vector<std::size_t> byPitch(usable.size());
+            std::iota(byPitch.begin(), byPitch.end(), 0);
+            std::sort(byPitch.begin(), byPitch.end(), [&](std::size_t a, std::size_t b) {
+                return usable[a].pitchRatio < usable[b].pitchRatio;
+            });
+            std::vector<int> pitchThird(usable.size());
+            for (std::size_t rank = 0; rank < byPitch.size(); ++rank) {
+                pitchThird[byPitch[rank]] = static_cast<int>(rank * 3 / byPitch.size());  // 0, 1, or 2
+            }
+
+            // [pitchThird][yawThird] — full 3x3 yaw x pitch grid.
+            static constexpr AngleBucket kGrid[3][3] = {
+                {AngleBucket::UpLeft, AngleBucket::Up, AngleBucket::UpRight},
+                {AngleBucket::Left, AngleBucket::Center, AngleBucket::Right},
+                {AngleBucket::DownLeft, AngleBucket::Down, AngleBucket::DownRight},
+            };
+            for (std::size_t i = 0; i < usable.size(); ++i) {
+                bucketed[kGrid[pitchThird[i]][yawThird[i]]].push_back(usable[i].embedding);
+            }
+        }
+    }
+
+    // Phase 4 — Average + store: one template per non-empty bucket.
+    // Averaging (already L2-normalized, per SFace's own output convention)
+    // embeddings then re-normalizing reduces sensitivity to any single bad
+    // frame/pose/lighting condition within a bucket.
     const std::string modelId = "sface:" + config.embedderModelPath;
-    const EmbeddingRecord record = fromMat(sum, modelId, config.cameraMode);
+    std::vector<EmbeddingRecord> records;
+    for (const auto& [bucket, embeddingsInBucket] : bucketed) {
+        cv::Mat sum = cv::Mat::zeros(embeddingsInBucket.front().size(), CV_32F);
+        for (const auto& e : embeddingsInBucket) sum += e;
+        sum /= static_cast<float>(embeddingsInBucket.size());
+        const double norm = cv::norm(sum, cv::NORM_L2);
+        if (norm > 0.0) sum /= static_cast<float>(norm);
+        records.push_back(fromMat(sum, modelId, config.cameraMode, bucket));
+    }
 
     EnrollmentMetadata metadata;
     metadata.modelId = modelId;
     metadata.cameraMode = config.cameraMode;
-    metadata.sampleCount = static_cast<int>(embeddings.size());
+    metadata.sampleCount = static_cast<int>(usable.size());
+    metadata.angleBucketCount = static_cast<int>(records.size());
     metadata.enrolledAtIso8601 = nowIso8601();
 
-    if (!store.save(username, record, metadata)) {
+    if (!store.saveAll(username, records, metadata)) {
         std::cout << "STATUS=error MESSAGE=\"failed to write enrollment to disk\"\n";
         return 1;
     }
 
-    std::cout << "STATUS=ok ENROLLED=true SAMPLES=" << embeddings.size() << " CAMERA_MODE="
-              << toString(config.cameraMode) << " ENROLLED_AT=\"" << metadata.enrolledAtIso8601
-              << "\"\n";
+    std::cout << "STATUS=ok ENROLLED=true SAMPLES=" << usable.size() << " ANGLE_BUCKETS="
+              << records.size() << " CAMERA_MODE=" << toString(config.cameraMode)
+              << " ENROLLED_AT=\"" << metadata.enrolledAtIso8601 << "\"\n";
     return 0;
 }
 

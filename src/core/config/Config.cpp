@@ -54,6 +54,8 @@ void applyConfigOverride(Config& config, const std::string& key, const std::stri
         config.matchThreshold = std::atof(value.c_str());
     } else if (key == "illumination_gain") {
         config.illuminationGain = std::atof(value.c_str());
+    } else if (key == "enroll_video_duration_sec") {
+        config.enrollVideoDurationSec = std::atoi(value.c_str());
     }
     // Unknown keys are intentionally ignored for forward compatibility.
 }
@@ -102,7 +104,8 @@ std::string serialize(const Config& config) {
         << "embedder_model_path = " << config.embedderModelPath << "\n"
         << "distance_metric = " << config.distanceMetric << "\n"
         << "match_threshold = " << config.matchThreshold << "\n"
-        << "illumination_gain = " << config.illuminationGain << "\n";
+        << "illumination_gain = " << config.illuminationGain << "\n"
+        << "enroll_video_duration_sec = " << config.enrollVideoDurationSec << "\n";
     return out.str();
 }
 
