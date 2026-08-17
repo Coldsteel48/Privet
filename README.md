@@ -160,10 +160,17 @@ succeeds only ~25% of the time even when lit, so a small budget could
 fail almost every attempt regardless of tuning. See
 `config/facial-auth.conf.example` for both settings' full rationale.
 
-## Camera setup — you need to do this first
+## Camera setup
 
-The exact V4L2 pixel format your IR sensor uses isn't hardcoded — confirm
-it before anything will work:
+The GUI's Settings page detects cameras for you — its **Camera device**
+dropdown lists every physical camera with a usable capture stream, tagging
+each as IR or RGB (a "Refresh" button re-scans after plugging something
+in). Picking a device and mode and hitting Save writes `device_path`,
+`pixel_format`, `camera_mode`, `frame_width`, and `frame_height` into
+`/etc/facial-auth/config.conf` for you — no manual V4L2 digging needed.
+
+If you'd rather do it by hand (or the GUI isn't available), confirm the
+pixel format your camera uses:
 
 ```sh
 v4l2-ctl --list-devices
@@ -171,10 +178,9 @@ v4l2-ctl --list-formats-ext -d /dev/videoN   # for each IR-looking node
 ```
 
 Then fill in `device_path`/`pixel_format` in
-`/etc/facial-auth/config.conf` (see `config/facial-auth.conf.example`).
-Only the `YUYV` pixel format is implemented in `V4L2Camera` right now —
-`GREY`/`Y16` (the likely IR formats) are stubbed pending this
-confirmation; see `src/core/camera/V4L2Camera.cpp`.
+`/etc/facial-auth/config.conf` yourself (see
+`config/facial-auth.conf.example`). Both `GREY` (IR) and `YUYV` (RGB) are
+implemented in `V4L2Camera`; see `src/core/camera/V4L2Camera.cpp`.
 
 A plain RGB webcam also works (`camera_mode = rgb`), but it's an explicit
 **at-your-own-risk** opt-in — no depth/liveness signal, far more
